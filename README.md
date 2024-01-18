@@ -19,8 +19,8 @@ If you have any question, or if you experience any difficulty, we recomand that 
 
 This kit contains 3 notebooks presenting our baseline pipeline. 
 
-* data processing: ...
-* model 1 : ...
+* data processing: Dowload the data cubes, compute new features, input missing data and preprocess data into xarray at two different reslution for the two models
+* model 1 : 
 * model 2 : ...
 
 ## Get started
