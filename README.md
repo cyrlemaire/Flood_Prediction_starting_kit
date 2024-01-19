@@ -19,9 +19,14 @@ If you have any question, or if you experience any difficulty, we recomand that 
 
 This kit contains 3 notebooks presenting the 3 steps of our baseline pipeline. We first process the raw data to prepare it for modeling and we train 2 sequential models. The idea behind this method is to use a first model with a low resolution (alligned with the ERA5 climate data - 31 sqkm pixels) that uses the climate variables to predict where and when floods are likely to happen. The output of the first models allow the second model (the actual high resolution flood map predictor) to only focus on the areas likely to be flooded.
 
+This approach allows us to be frugal by not training a high resolution model on the entire dataset (climate + geodata) at once. 
+
 * data processing: Dowload the data cubes, compute new features, input missing data and preprocess data into xarray at two different reslution for the two models
-* model 1 : 
+* model 1 : ...
 * model 2 : ...
+
+
 
 ## Get started
 
+Before running the notebooks, create a python environement of your choice with python 3.8.18. You can then install the environment with the requirements.txt file.

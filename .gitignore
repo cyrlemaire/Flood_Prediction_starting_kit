@@ -1,2 +1,4 @@
 localdata/*
+graph/*
 __pycache__
+*.pkl
