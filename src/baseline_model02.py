@@ -16,6 +16,7 @@ import random
 from sklearn.model_selection import cross_val_score
 import os
 import json
+import src.Utils as utils
 class BaseLineModel:
     """
     BaseLineModel is designed to serve as a foundational framework for flood prediction
@@ -293,62 +294,6 @@ class BaseLineModel:
 
         return model
 
-    def preprocess_ER5_labels(self, 
-                              raw_labels: xr.Dataset) -> xr.Dataset:
-        """Preprocesses ERA5 labels by cleaning and reformatting : convert to 
-        weekly labels, remove the duplicated band/date, adds missing dates 
-        to maintain a continuous time series.
-
-        Parameters
-        ----------
-        raw_labels : xr.Dataset
-            The raw labels dataset to be preprocessed.
-
-        Returns
-        -------
-        xr.Dataset
-            The preprocessed labels as an xarray Dataset.
-        """
-        raw_labels = raw_labels.rename({'band': 'time'})
-
-        data_array = raw_labels['__xarray_dataarray_variable__']
-        data_array_filled = data_array.fillna(0)
-        raw_labels['__xarray_dataarray_variable__'] = data_array_filled
-        raw_labels = raw_labels.where(raw_labels.time != '20030101-200301080000000000-0000014848', drop=True)
-        # renanming of the duplicated band/date
-        band_series = pd.Series(raw_labels.time.values)
-        band_series = band_series.replace({'20030101-200301080000000000-0000000000': '20030101-20030108'})
-        raw_labels = raw_labels.assign_coords(time=band_series.values)
-
-        # convert the band/date to datetime64
-        original_band_dates = [self.parse_dates(band) for band in raw_labels.time.values]
-
-        # filter the bands/dates to keep only the ones between start_date and end_date
-        start_date = '2002-07-07'
-        end_date = '2003-12-28'
-        
-        # addition of the missing bands/dates (weeks without flood)
-        new_bands = pd.date_range(start=start_date, end=end_date, freq='W').values        
-        new_data = np.full((len(new_bands), *raw_labels.__xarray_dataarray_variable__.shape[1:]), False)
-        #filling the new_data with the original data (with flood)
-        for i, new_band in enumerate(new_bands):
-            for old_start, old_end in original_band_dates:
-                if new_band >= np.datetime64(old_start) and new_band <= np.datetime64(old_end):
-                    old_band_index = np.where(raw_labels.time == f'{old_start.strftime("%Y%m%d")}-{old_end.strftime("%Y%m%d")}')[0][0]
-                    new_data[i] = raw_labels.__xarray_dataarray_variable__[old_band_index].values
-                    break
-
-        # New xarray with updated coordinates and dimensions
-        new_da = xr.DataArray(new_data, coords=[new_bands, raw_labels.y, raw_labels.x], dims=["time", "y", "x"])
-
-        return xr.Dataset({
-            '__xarray_dataarray_variable__': new_da
-        }, coords={
-            'time': new_bands,
-            'x': raw_labels.x,
-            'y': raw_labels.y
-        }) # the new label xarray dataset
-
 
     # NEED TO BE BREAK INTO SMALLER FUNCTION
     def prepare_data(self,
@@ -368,8 +313,7 @@ class BaseLineModel:
         model1_score = self.df_all
         total = 0
         coord = {"train":{"TP":[], "FP":[]}, "test":{"TP":[], "FP":[]}, "val":{"TP":[], "FP":[]}}
-        yyy = xr.open_dataset(self.labels_ERA5_path)
-        final_label_era5 = self.preprocess_ER5_labels(yyy)
+        final_label_era5 = xr.open_dataset(self.labels_ERA5_path)
 
         if compute_full_test_set:
             datasets = ["test"]
@@ -494,7 +438,7 @@ class BaseLineModel:
                             end_date = self.dataset_limits[dataset]['end'],
                             dataset = dataset,
                             compute_full_test_set = compute_full_test_set)
-                        X_combined[dataset], y_combined[dataset] = stack_if_exists(X_combined[dataset], y_combined[dataset], X, y)
+                        X_combined[dataset], y_combined[dataset] = utils.stack_if_exists(X_combined[dataset], y_combined[dataset], X, y)
 
 
         if compute_full_test_set:
@@ -1273,7 +1217,7 @@ class BaseLineModel:
             raise ValueError("dataset must be either Val, Train or Test")
 
         rejected_predictions = model1_score < scoreMinM1
-        y_pred_proba_val = batch_predict(self.model,X)
+        y_pred_proba_val = utils.batch_predict(self.model,X)
         if filter:
             y_pred_proba_val[rejected_predictions] = 0
         for eval_metric in ["roc", "AP", "BrierScore"]:
@@ -1318,7 +1262,7 @@ class BaseLineModel:
             raise ValueError("dataset must be either Val, Train or Test")
 
         rejected_predictions = model1_score < scoreMinM1
-        y_pred_val = self.model.batch_predict(X, is_proba=False)
+        y_pred_val = utils.batch_predict(X, is_proba=False)
         if filter:
             y_pred_val[rejected_predictions] = 0
         for eval_metric in ["f1", "precision", "recall", "acc"]:
@@ -1415,7 +1359,7 @@ class BaseLineModel:
             else:
                 raise ValueError("dataset must be either Val, Train or Test")
             
-            y_pred_proba_test = batch_predict(self.model, X)
+            y_pred_proba_test = utils.batch_predict(self.model, X)
 
             for metric in metrics:
                 plt.figure(figsize=(8, 6))
@@ -1481,7 +1425,7 @@ class BaseLineModel:
         else:
             raise ValueError("dataset must be either Val, Train or Test")
         
-        y_pred_proba_test = batch_predict(self.model, X)
+        y_pred_proba_test = utils.batch_predict(self.model, X)
 
         print("# data points",y.shape)
         auc = roc_auc_score(y, y_pred_proba_test)
@@ -1933,68 +1877,3 @@ class BaseLineModel:
             plt.savefig(f"{save_path}{band_index}.png")
             plt.close(fig)
 
-def batch_predict(model, 
-                  X: np.ndarray, 
-                  batch_size: int = 10000,
-                  is_proba = True) -> np.ndarray:
-    """Predicts probabilities in batches to reduce memory usage.
-
-    Parameters
-    ----------
-    model : Any
-        The machine learning model used for prediction. (here random forest)
-    X : np.ndarray
-        The input features.
-    batch_size : int, optional
-        The size of each batch for prediction. Default is 10000.
-
-    Returns
-    -------
-    np.ndarray
-        The concatenated predictions from each batch as a numpy array.
-
-    """
-    n_samples = X.shape[0]
-    y_pred_proba_batches = []
-
-    for start in range(0, n_samples, batch_size):
-        end = min(start + batch_size, n_samples)
-        batch = X[start:end]
-        if is_proba:
-            y_pred_proba_batch = model.predict_proba(batch)[:, 1]
-        else:
-            y_pred_proba_batch = model.predict(batch) 
-        y_pred_proba_batches.append(y_pred_proba_batch)
-
-    return np.concatenate(y_pred_proba_batches)
-
-
-
-def stack_if_exists(X_combined, y_combined, X, y):
-    """Stacks the new set of features and targets onto the existing combined arrays.
-    
-    Parameters
-    ----------
-    X_combined : np.ndarray or None
-        The existing array of combined features, or None if not yet initialized.
-    y_combined : np.ndarray or None
-        The existing array of combined targets, or None if not yet initialized.
-    X : np.ndarray
-        The new set of features to add.
-    y : np.ndarray
-        The new set of targets to add.
-
-    Returns
-    -------
-    Tuple[np.ndarray, np.ndarray]
-        The updated combined feature and target arrays.
-
-    """
-    if X_combined is None:
-        X_combined = X
-        y_combined = y
-    else:
-        X_combined = np.vstack((X_combined, X))
-        y_combined = np.hstack((y_combined, y))
-
-    return X_combined, y_combined
