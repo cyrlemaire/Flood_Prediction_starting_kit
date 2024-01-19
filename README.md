@@ -17,25 +17,24 @@ If you have any question, or if you experience any difficulty, we recomand that 
 
 ## Starting kit content
 
-This kit contains 3 notebooks presenting the 3 steps of our baseline pipeline. We first process the raw data to prepare it for modeling and we train 2 sequential models. The idea behind this method is to use a first model with a low resolution (alligned with the ERA5 climate data - 31 sqkm pixels) that uses the climate variables to predict where and when floods are likely to happen. The output of the first models allow the second model (the actual high resolution flood map predictor) to only focus on the areas likely to be flooded.
+This kit contains 3 notebooks presenting the 3 steps of our baseline pipeline. We first process the raw data to prepare it for modeling and we train 2 sequential models. The idea behind this method is to use a first model with a low resolution (alligned with the ERA5 climate data - tiles of 31 sqkm ) that uses the climate variables to predict where and when floods are likely to happen. The output of the first models allow the second model (the actual high resolution flood map predictor) to only focus on the areas likely to be flooded.
 
 This approach allows us to be frugal by not training a high resolution model on the entire dataset (climate + geodata) at once. 
-
-* data processing: Dowload the data cubes, compute new features, input missing data and preprocess data into xarray at two different reslution for the two models
-* model 1 : ...
-* model 2 : ...
-
 
 
 ## Get started
 
-Before running the notebooks, create a python environement of your choice with python 3.8.18. You can then install the environment with the requirements.txt file.
-First you need to install the required environement :
-* Open a terminal or command prompt and navigate to the directory where your starting_kit.yml file is located.
-* Run the following command to create a new Conda environment using the specified YAML file: conda env create -f starting_kit.yml
-* Once the environment is created, activate it using the following command: conda activate <environment_name>
-* You can verify that the environment is active and the required packages are installed by running: conda list
+Before running the notebooks, create a python environement of your choice with python 3.8.18. You can then install the requirements by running:
+```
+pip install -r requirements.txt
+```
 
+You can then open the 3 notebooks and run them in order:
+* 1_datapreparator_minicube.ipynb : Download the data cubes, compute new features, input missing data and preprocess data into xarray at two different reslution for the two models
+* 2_baseline_model01.ipynb: Train the first model using climate data. This model uses an agregated label at the ERA5 resolution (tiles of 31 sqkm) and predicts a M1 score for each tile. This score quantifies the amount of flood pixel present in the tile for the given week. The M1 score is used as an output feature for the second model. The model is then evaluated and heat maps are created to visualize the results
+* 3_baseline_model02.ipynb: Train the second model using the actual flood maps. This model is trained on a subset of the dataset chosen using a threshold on the M1 score (*min_score_model1* attribute of the BaseLineModel class). Once trained, the model is evaluated on a subset of the data. **The last part of the notebook allows you to generate the sumbission file for the codabench leaderboard containing the predictions on the secret test set.**
+
+In the current state, the model is trained and tested on subsets of the training data. To obtain the full baseline performance, you should train the model on the full provided dataset.
 
 
 
