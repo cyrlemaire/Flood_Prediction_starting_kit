@@ -30,3 +30,12 @@ This approach allows us to be frugal by not training a high resolution model on 
 ## Get started
 
 Before running the notebooks, create a python environement of your choice with python 3.8.18. You can then install the environment with the requirements.txt file.
+First you need to install the required environement :
+* Open a terminal or command prompt and navigate to the directory where your starting_kit.yml file is located.
+* Run the following command to create a new Conda environment using the specified YAML file: conda env create -f starting_kit.yml
+* Once the environment is created, activate it using the following command: conda activate <environment_name>
+* You can verify that the environment is active and the required packages are installed by running: conda list
+
+
+
+
