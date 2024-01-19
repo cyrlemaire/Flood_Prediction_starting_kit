@@ -13,6 +13,7 @@ from sklearn.model_selection import cross_val_score
 from typing import Union, Tuple, List, Optional, Any
 import os
 from matplotlib.colors import ListedColormap, BoundaryNorm
+import src.Utils as utils
 
 class BaseLineModel:
     """Base class for the baseline model.
@@ -111,78 +112,32 @@ class BaseLineModel:
         # dimensions of the dataset
         self.x_dim = self.labels.dims['x']
         self.y_dim = self.labels.dims['y']
-        self.time_dim = self.labels.dims['band']
+        self.time_dim = self.labels.dims['time']
 
         # split train test mode
         self.reduce_train=reduce_train
         # train test split date
+    
 
+    def index_splitter(self, 
+                       input_list:List[int], 
+                       histodept:int, 
+                       histodept2:int, 
+                       use_derivative:bool)->Tuple[List[int], List[int]]:
+        """ convert a list of indices into a list of static indices and a list of dynamic indices
+        using the info about the structure of the dataset. Also add the derivative of the dynamic features if needed.
+        And compute the name of the dynamic features.
 
-    def parse_dates(self, band_str):
-        # handle the case where the band is a datetime64 or a string (e.g. "20030101-20030108") 
-        # conversion to a datetime64 (some xarry have datetime64 and some have string)
-        if isinstance(band_str, np.datetime64):
-            start_date = band_str
-            end_date = None  
-        else:
-            start_str, end_str = band_str.split('-')
-            start_date = pd.to_datetime(start_str)
-            end_date = pd.to_datetime(end_str)
-        return start_date, end_date # return the start and the end date if any
+        Args:
+            input_list (List[int]): list of indices of the features to use (static and dynamic)
+            histodept (int): history depth for averaging the dynamic features
+            histodept2 (int): history depth for averaging the dynamic features (second part)
+            use_derivative (bool): Activate the computation of the derivative of the dynamic features
 
-    def preprocess_labels(self, raw_labels):
-        # preprocess the labels, remove useless band/date and convert the band/date to datetime64
-        # remove useless bands 
-        
+        Returns:
+            Tuple[List[int], List[int]]: list of static indices and list of dynamic indices
+        """
 
-        raw_labels = raw_labels.where(raw_labels.band != '20030101-200301080000000000-0000014848', drop=True)
-        # renanming of the duplicated band/date
-        band_series = pd.Series(raw_labels.band.values)
-        band_series = band_series.replace({'20030101-200301080000000000-0000000000': '20030101-20030108'})
-        raw_labels = raw_labels.assign_coords(band=band_series.values)
-
-        # convert the band/date to datetime64
-        original_band_dates = [self.parse_dates(band) for band in raw_labels.band.values]
-
-        # filter the bands/dates to keep only the ones between start_date and end_date
-        start_date = self.dataset_limits["train"]["start"]
-        end_date = self.dataset_limits["inf"]["end"]
-
-        # addition of the missing bands/dates (weeks without flood)
-        new_bands = pd.date_range(start=start_date, end=end_date, freq='W').values        
-        new_data = np.full((len(new_bands), *raw_labels.__xarray_dataarray_variable__.shape[1:]), np.nan)
-        #filling the new_data with the original data (with flood)
-        outside_of_france_mask = raw_labels['__xarray_dataarray_variable__'][0]==-1
-
-        for i, new_band in enumerate(new_bands):
-            new_data[i][outside_of_france_mask] = -1
-            #baseline_model_generator.labels['__xarray_dataarray_variable__'][7].values[mask]
-            for old_start, old_end in original_band_dates:
-                if (new_band >= np.datetime64(old_start)) and (new_band <= np.datetime64(old_end)):
-                    old_band_index = np.where(raw_labels.band == f'{old_start.strftime("%Y%m%d")}-{old_end.strftime("%Y%m%d")}')[0][0]
-                    new_data[i] = raw_labels.__xarray_dataarray_variable__[old_band_index].values
-                elif (new_band <= np.datetime64(old_end)) and (new_band >= (np.datetime64(old_start)- np.timedelta64(7,'D'))):
-                    old_band_index = np.where(raw_labels.band == f'{old_start.strftime("%Y%m%d")}-{old_end.strftime("%Y%m%d")}')[0][0]
-                    new_data[i] = raw_labels.__xarray_dataarray_variable__[old_band_index].values
-
-
-        new_da = xr.DataArray(new_data, coords=[new_bands, raw_labels.y, raw_labels.x], dims=["band", "y", "x"])
-
-        return xr.Dataset({
-            '__xarray_dataarray_variable__': new_da
-        }, coords={
-            'band': new_bands,
-            'x': raw_labels.x,
-            'y': raw_labels.y
-        }) # the new label xarray dataset
-
-
-
-
-    def index_splitter(self, input_list, histodept, histodept2, use_derivative):
-        # convert a list of indices into a list of static indices and a list of dynamic indices
-        # using the info about the structure of the dataset
-        # this is useful to be able to use a GA to optimize the model
         self.all_dynamic_vars_names = []
         static = [x for x in input_list if 0 <= x < self.nb_feature_static]
         dynamic = [x for x in input_list if self.nb_feature_static <= x < self.nb_feature_static + self.nb_feature_dynamic]
@@ -214,19 +169,33 @@ class BaseLineModel:
 
     
     def train_flood_prediction_model(self, 
-                                     indices, # list of indices of the features to use (static and dynamic)
-                                     use_derivative, # compute the derivative of the dynamic features
-                                     n_estimators, # number of estimators for the random forest
-                                     max_depth, # max depth of the random forest
-                                     histodept, # number of layers to average for the dynamic features (first part)
-                                     histodept2, # number of layers to average for the dynamic features (second part)
-                                     is_GA=False):
+                                     indices:List[int], 
+                                     use_derivative:bool,
+                                     n_estimators:int, 
+                                     max_depth:int, 
+                                     histodept:int, 
+                                     histodept2:int,
+                                     is_GA=False)->Tuple[RandomForestClassifier, float]:
+        """Train the random forest model
+
+        Args:
+            indices (List[int]): list of indices of the features to use (static and dynamic)
+            use_derivative (bool): compute the derivative of the dynamic features
+            n_estimators (int): number of estimators for the random forest
+            max_depth (int): max depth of the random forest
+            histodept (int): number of layers to average for the dynamic features (first part)
+            histodept2 (int): number of layers to average for the dynamic features (second part)
+            is_GA (bool, optional): Are we in a GA optimisation. Defaults to False. (if True we don't save results)
+
+        Returns:
+            Tuple[RandomForestClassifier, float]: Trained random forest model and the score of the model
+        """
 
         features_all_bands = []
         targets_all_bands = []
         static_indices, dynamic_indices = self.index_splitter(indices, histodept, histodept2, use_derivative)
         num_statics = len(static_indices)
-        for band in self.labels.band.values:
+        for band in self.labels.time.values:
             start_date = pd.to_datetime(band)
 
             filtered_dynamic_features = self.dynamic_features.sel(time=slice(None, start_date))
@@ -263,7 +232,7 @@ class BaseLineModel:
 
             features_all_bands.append(feature_temp)
 
-            target = self.labels['__xarray_dataarray_variable__'].sel(band=band).data.reshape(-1)
+            target = self.labels['__xarray_dataarray_variable__'].sel(time=band).data.reshape(-1)
             targets_all_bands.append(target)
 
         # split train test
@@ -325,12 +294,24 @@ class BaseLineModel:
                 scores.mean())
 
     def process_dynamic_feature(self, 
-                                feature, # dynamic feature
-                                histodepth, # number of layers to average
-                                feature_array, # output array of features
-                                feature_index, # index of the current feature
-                                use_derivative # compute the derivative of the dynamic features
-                                ):
+                                feature: xr.DataArray, # dynamic feature
+                                histodepth: int, # history depth for averaging the dynamic features
+                                feature_array: np.ndarray, # array of features
+                                feature_index: int, # index of the feature in the array
+                                use_derivative: bool # compute the derivative of the dynamic features
+                                )->Tuple[int, np.ndarray]:
+        """
+        Process a dynamic feature by averaging histodepth layers also compute the derivative if needed.
+        Args:
+            feature (xr.DataArray): dynamic feature
+            histodepth (int): history depth for averaging the dynamic features
+            feature_array (np.ndarray): array of features
+            feature_index (int): index of the feature in the array
+            use_derivative (bool): compute the derivative of the dynamic features
+
+        Returns:
+            Tuple[int, np.ndarray]: index of the feature in the array and the array of features
+        """
         if histodepth > 0:
             last_layers = feature.isel(time=slice(-histodepth, None))
             averaged_feature = last_layers.mean(dim='time')
@@ -411,8 +392,18 @@ class BaseLineModel:
         
         return var_names[index]
 
-    def get_flood_bands(self, all_bands, labels):
-        """Filter bands based on the flood condition."""
+    def get_flood_bands(self, 
+                        all_bands: List[str], 
+                        labels: xr.Dataset) -> List[str]:
+        """ Get the bands with flood, use to reduce the train dataset to only the bands with flood 
+        when (reduce_train=True) by default we keep all the bands.
+
+        Args:
+            all_bands (List[str]): list of all the bands
+            labels (xr.Dataset): labels dataset
+        Returns:
+            List[str]: list of bands with flood
+        """
         flood_bands = []
         for band_date in all_bands:
             band_data = labels['__xarray_dataarray_variable__'].sel(time=band_date).values
@@ -441,13 +432,13 @@ class BaseLineModel:
             Tuple[np.ndarray, np.ndarray]: filtered feature and label arrays
         """
         start, end = pd.to_datetime(start_date), pd.to_datetime(end_date)
-        all_bands = self.labels.band.values
+        all_bands = self.labels.time.values
 
         if self.reduce_train:
             all_bands = self.get_flood_bands(all_bands, self.labels)
 
         bands = [band for band in all_bands if start < band <= end]
-        band_to_index = {band: idx for idx, band in enumerate(self.labels.band.values)}
+        band_to_index = {band: idx for idx, band in enumerate(self.labels.time.values)}
 
         num_samples = len(bands)
         feature_shape = features_filtered[0].shape[:2]
@@ -644,10 +635,10 @@ class BaseLineModel:
         boundaries = [-0.5, 0.5, 1.5, 2.5, 3.5]
         norm = BoundaryNorm(boundaries, cmap.N, clip=True)
 
-        for k, band_index in enumerate(self.labels.sel(band=slice(
+        for k, band_index in enumerate(self.labels.sel(time=slice(
                             self.dataset_limits["train"]["start"],
                             self.dataset_limits["train"]["end"],
-                            )).band.values):
+                            )).time.values):
             fig, axs = plt.subplots(n_rows + 2, 1, figsize=(20, 40))
 
             grid_2d = self.full_grid_all[k, :, :]
@@ -688,7 +679,12 @@ class BaseLineModel:
 
 
     def save_prediction_map(self, 
-                            save_path = "graph/model1_AP/predictions/"):
+                            save_path:str = "graph/model1_AP/predictions/"):
+        """ Predictions map at different thresholds.
+
+        Args:
+            save_path (str, optional): Saving path. Defaults to "graph/model1_AP/predictions/".
+        """
         for specific_time_slice in range(self.full_grid_all.shape[0]):
             grid_2d = self.full_grid_all[specific_time_slice, :, :]
             plt.figure(figsize=(20, 8))
@@ -705,13 +701,18 @@ class BaseLineModel:
             plt.close()
 
     def save_prediction_map_and_labels(self, 
-                            save_path = "graph/model1_AP/label_and_pred/"):
+                            save_path:str = "graph/model1_AP/label_and_pred/"):
+        """ Predictions map at different thresholds with labels.
+
+        Args:
+            save_path (str, optional): Saving path. Defaults to "graph/model1_AP/label_and_pred/".
+        """
         font_size = 32
 
-        for k, band_index in enumerate(self.labels.sel(band=slice(
+        for k, band_index in enumerate(self.labels.sel(time=slice(
                             self.dataset_limits["train"]["start"],
                             self.dataset_limits["train"]["end"],
-                            )).band.values):
+                            )).time.values):
             labelmap = self.labels['__xarray_dataarray_variable__'][k].values
 
             grid_2d = self.full_grid_all[k, :, :]
@@ -742,21 +743,43 @@ class BaseLineModel:
             plt.close(fig)
 
 
-    def verb_indiv(self, individual, save_model=False):
-        # print a GA individual as model parameters
+    def verb_indiv(self, 
+                   individual: List[Any]):
+        """ Print the model parameters from a GA individual. 
+        Breaks the individual into model parameters.
+
+        Args:
+            individual (List[Any]): GA individual
+            save_model (bool, optional): 
+
+        """
         print(individual)
         print("indices", [i for i, use in enumerate(individual[:self.nb_feature]) if use])
         print(self.nb_feature)
-        return self.verb_name(indices = [i for i, use in enumerate(individual[:self.nb_feature]) if use], 
+        self.verb_name(indices = [i for i, use in enumerate(individual[:self.nb_feature]) if use], 
                                 use_derivative = individual[self.nb_feature], 
                                 n_estimators = individual[self.nb_feature+1], 
                                 max_depth = individual[self.nb_feature+2], 
                                 histodept = individual[self.nb_feature+3], 
-                                histostrt = individual[self.nb_feature+4], 
-                                save_model = save_model) 
+                                histostrt = individual[self.nb_feature+4]) 
 
-    def verb_name(self, indices, use_derivative, n_estimators, max_depth, histodept, histostrt, save_model=False):
-        # print the model parameters
+    def verb_name(self, 
+                  indices: List[int], 
+                  use_derivative: bool, 
+                  n_estimators:int, 
+                  max_depth:int, 
+                  histodept:int, 
+                  histostrt:int):
+        """ Print the model parameters.
+
+        Args:
+            indices (List[int]): List of indices of the features to use (static and dynamic)
+            use_derivative (bool): compute the derivative of the dynamic features
+            n_estimators (int): number of estimators for the random forest
+            max_depth (int): max depth of the random forest
+            histodept (int): history depth for averaging the dynamic features
+            histostrt (int): history depth for averaging the dynamic features (second part)
+        """
         static_indices, dynamic_indices = self.index_splitter(indices, histodept, histostrt, use_derivative)
 
         print("static_indices",static_indices)
@@ -773,10 +796,10 @@ class BaseLineModel:
         print("max_depth",max_depth)
         print("histodept",histodept)
         print("histostrt",histostrt)
-        print("save_model",save_model)
 
 
     def compute_all_metrics(self):
+        """Compute all the metrics for the train, val and test dataset"""
         for dataset in ["Train", "Test", "Val"]:
             print(f"{dataset} :")
             if dataset == "Train":
@@ -790,8 +813,8 @@ class BaseLineModel:
                 y = self.y_val
             else:
                 raise ValueError("dataset must be either Val, Train or Test")
-            y_pred_proba_val = batch_predict(self.model,X, is_proba = True)
-            y_pred_val = batch_predict(self.model,X, is_proba = False)
+            y_pred_proba_val = utils.batch_predict(self.model,X, is_proba = True)
+            y_pred_val = utils.batch_predict(self.model,X, is_proba = False)
             for metric in ["roc", "AP", "BrierScore", "f1", "precision", "recall", "acc"]:
                 score = self.compute_metric(y_pred_proba_val,
                                             y_pred_val,
@@ -802,7 +825,22 @@ class BaseLineModel:
             print(f"")
 
 
-    def compute_metric(self, y_pred_proba_val,y_pred_val, y, mode = "roc"):
+    def compute_metric(self, 
+                       y_pred_proba_val: np.ndarray,
+                       y_pred_val: np.ndarray, 
+                       y: np.ndarray, 
+                       mode = "roc")->float:
+        """ Compute a metric for the model
+
+        Args:
+            y_pred_proba_val (np.ndarray): model prediction probabilities
+            y_pred_val (np.ndarray): model prediction
+            y (np.ndarray): true labels
+            mode (str, optional): metric to compute. Defaults to "roc".
+
+        Returns:
+            float: score of the metric
+        """
 
         if mode == "roc":
             score = roc_auc_score(y, y_pred_proba_val)
@@ -845,9 +883,9 @@ class BaseLineModel:
         else:
             raise ValueError("dataset must be either Val, Train or Test")
         rejected_predictions = model1_score < 0.5
-        y_pred_proba_val = batch_predict(self.model,X, is_proba = True)
+        y_pred_proba_val = utils.batch_predict(self.model,X, is_proba = True)
         y_pred_proba_val[rejected_predictions] = 0
-        y_pred_val = batch_predict(self.model,X, is_proba = False)
+        y_pred_val = utils.batch_predict(self.model,X, is_proba = False)
         y_pred_val[rejected_predictions] = 0
         for eval_metric in ["roc", "AP", "BrierScore", "f1", "precision", "recall", "acc"]:
             score = self.compute_metric(y_pred_proba_val,
@@ -858,18 +896,24 @@ class BaseLineModel:
             print(f"{eval_metric} : {score}")
 
     def auc_graph(self, 
-                  dataset = ["Train"], 
-                  metrics = "auto",
-                  key_thresholds = [0.001,0.005,0.01,0.05,0.1, 0.2,0.3, 0.5, 0.9]):
+                  dataset:List[str] = ["Train"], 
+                  metrics:List[str] = ["auto"],
+                  key_thresholds:List[float] = [0.001,0.005,0.01,0.05,0.1, 0.2,0.3, 0.5, 0.9]):
+        """ Plot the ROC curve and the AUC for the train or test dataset
+
+        Args:
+            dataset (List[str], optional): dataset to plot. Defaults to ["Train"].
+            metrics (List[str], optional): metrics to plot. Defaults to "auto".
+            key_thresholds (List[float], optional): Key thresholds to plot for the AUC-ROC
+
+        """
         # plot the ROC curve and the AUC for the train or test dataset
         if len(dataset)==0:
             datasets = ["Train", "Test", "Val"]
         else:
             datasets = dataset
-        if metrics == "auto":
+        if len(metrics)==0:
             metrics = [self.eval_metric_GA]
-        elif metrics == "":
-            metrics = ["roc_auc", "average_precision"]
         else:
             metrics = [metrics]
 
@@ -926,9 +970,13 @@ class BaseLineModel:
                 print(f"AUC: {auc}")
     
     def save_to_disk(self, 
-                     name = False, 
-                     reload = True):
-        if name == False:
+                     name:str = ""):
+        """Save the model to disk
+
+        Args:
+            name (bool, optional): Name of the model.
+        """
+        if name == "":
             name = self.obj_name
 
         with open(self.obj_name+'.pkl', 'wb') as file: 
@@ -937,7 +985,15 @@ class BaseLineModel:
 
 
     def load_from_disk(self, 
-                       name):
+                       name:str)->object:
+        """ Load the model from disk
+
+        Args:
+            name (str): Name of the model.
+
+        Returns:
+            object: model
+        """
         with open(name+'.pkl', 'rb') as file:  
             loaded = pickle.load(file)
 
@@ -1007,38 +1063,3 @@ class BaseLineModel:
         print("Best Fitness: ", best_fitness_indiv)
         with open("best_fitness.txt", "w") as file:
             file.write(f"Best Fitness: {best_ind}\n")
-
-def batch_predict(model, 
-                  X: np.ndarray, 
-                  batch_size: int = 10000,
-                  is_proba = True) -> np.ndarray:
-    """Predicts probabilities in batches to reduce memory usage.
-
-    Parameters
-    ----------
-    model : Any
-        The machine learning model used for prediction. (here random forest)
-    X : np.ndarray
-        The input features.
-    batch_size : int, optional
-        The size of each batch for prediction. Default is 10000.
-
-    Returns
-    -------
-    np.ndarray
-        The concatenated predictions from each batch as a numpy array.
-
-    """
-    n_samples = X.shape[0]
-    y_pred_proba_batches = []
-
-    for start in range(0, n_samples, batch_size):
-        end = min(start + batch_size, n_samples)
-        batch = X[start:end]
-        if is_proba:
-            y_pred_proba_batch = model.predict_proba(batch)[:, 1]
-        else:
-            y_pred_proba_batch = model.predict(batch) 
-        y_pred_proba_batches.append(y_pred_proba_batch)
-
-    return np.concatenate(y_pred_proba_batches)
