@@ -25,3 +25,12 @@ This kit contains 3 notebooks presenting our baseline pipeline.
 
 ## Get started
 
+First you need to install the required environement :
+* Open a terminal or command prompt and navigate to the directory where your starting_kit.yml file is located.
+* Run the following command to create a new Conda environment using the specified YAML file: conda env create -f starting_kit.yml
+* Once the environment is created, activate it using the following command: conda activate <environment_name>
+* You can verify that the environment is active and the required packages are installed by running: conda list
+
+
+
+
