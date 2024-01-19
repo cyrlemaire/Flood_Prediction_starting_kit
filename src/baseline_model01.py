@@ -5,8 +5,6 @@ from sklearn.ensemble import RandomForestClassifier
 from sklearn.metrics import roc_curve, roc_auc_score, balanced_accuracy_score, precision_recall_curve, average_precision_score, brier_score_loss, accuracy_score, f1_score, precision_score, recall_score
 import matplotlib.pyplot as plt
 import pandas as pd
-from tqdm import tqdm
-import gc
 import pickle
 import random
 from sklearn.model_selection import cross_val_score
