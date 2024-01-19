@@ -1330,7 +1330,7 @@ class BaseLineModel:
             datasets = [dataset]
         
         if metrics == "":
-            metrics = ["roc_auc", "average_precision"]
+            metrics = ["roc_auc"]
         else:
             metrics = [metrics]
 
