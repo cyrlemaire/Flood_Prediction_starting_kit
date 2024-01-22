@@ -32,7 +32,7 @@ class BaseLineModel:
                  val_start:str = "2003-01-1", # date where to split train test
                  val_end:str = "2003-03-17", # date where to split train test
                  inf_start:str = "2003-11-1", # date where to split train test
-                 inf_end:str = "2004-02-01", # date where to split train test
+                 inf_end:str = "2004-01-01", # date where to split train test
                  name:str = "Model_01_default",
                  seed:int = 42,
                  is_cross_val:bool = True,
@@ -740,6 +740,45 @@ class BaseLineModel:
             plt.savefig(f"{save_path}{band_index}.png")
             plt.close(fig)
 
+
+
+    def save_error_map(self, 
+                            save_path:str = "graph/model1_AP/save_error_map/"):
+        """ Predictions map at different thresholds with labels.
+
+        Args:
+            save_path (str, optional): Saving path. Defaults to "graph/model1_AP/label_and_pred/".
+        """
+        font_size = 32
+
+        for k, band_index in enumerate(self.labels.sel(time=slice(
+                            self.dataset_limits["train"]["start"],
+                            self.dataset_limits["train"]["end"],
+                            )).time.values):
+            labelmap = self.labels['__xarray_dataarray_variable__'][k].values
+
+            grid_2d = self.full_grid_all[k, :, :]
+            grid_2d[labelmap == -1] = np.nan
+
+            labelmap[labelmap == -1] = np.nan
+
+            fig, axs = plt.subplots(1, 2, figsize=(32, 16))
+            cmap = plt.cm.bwr
+            cmap.set_bad('#A5E0E4', 1.)
+
+            Errors = grid_2d - labelmap
+            plt.figure(figsize=(20, 8))
+            plt.imshow(grid_2d, cmap=cmap, interpolation='none')
+
+
+
+            plt.tight_layout()
+
+            isExist = os.path.exists(save_path)
+            if not isExist:
+                os.makedirs(save_path)
+            plt.savefig(f"{save_path}{band_index}.png")
+            plt.close(fig)
 
     def verb_indiv(self, 
                    individual: List[Any]):
