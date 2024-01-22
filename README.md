@@ -33,7 +33,7 @@ You can then open the 3 notebooks and run them in order:
 * 1_datapreparator_minicube.ipynb : Download the data cubes, compute new features, input missing data and preprocess data into xarray at two different reslution for the two models
 * 2_baseline_model01.ipynb: Train the first model using climate data. This model uses an agregated label at the ERA5 resolution (tiles of 31 sqkm) and predicts a M1 score for each tile. This score quantifies the amount of flood pixel present in the tile for the given week. The M1 score is used as an output feature for the second model. The model is then evaluated and heat maps are created to visualize the results
 * 3_baseline_model02.ipynb: Train the second model using the actual flood maps. This model is trained on a subset of the dataset chosen using a threshold on the M1 score (*min_score_model1* attribute of the BaseLineModel class). Once trained, the model is evaluated on a subset of the data. 
-* 4_submission.ipynb: generate the sumbission file for the codabench leaderboard from a netcdf prediction file.
+* 4_submission.ipynb: generate the submission file for the codabench leaderboard from a netcdf prediction file.
 
 In the current state, the model is trained and tested on subsets of the training data. To obtain the full baseline performance, you should train the model on the full provided dataset.
 
