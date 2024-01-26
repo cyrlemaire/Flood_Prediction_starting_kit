@@ -12,6 +12,7 @@ from typing import Union, Tuple, List, Optional, Any
 import os
 from matplotlib.colors import ListedColormap, BoundaryNorm
 import src.Utils as utils
+import matplotlib.colors as colors
 
 class BaseLineModel:
     """Base class for the baseline model.
@@ -67,7 +68,7 @@ class BaseLineModel:
         self.is_cross_val = is_cross_val
         self.seed = seed
         self.obj_name = name
-
+        self.full_grid_all = None
         self.dataset_limits = {
             'train': {'start':  pd.to_datetime(train_start), 'end':  pd.to_datetime(train_end)},
             'val': {'start':  pd.to_datetime(val_start), 'end':  pd.to_datetime(val_end)},
@@ -627,6 +628,9 @@ class BaseLineModel:
             save_path (str, optional): Saving path. Defaults to "graph/model1_AP/compare_threshold/".
             thresholds (list, optional): Prediction threshold to define positive / negative predictions.
         """
+        if self.full_grid_all is None:
+            self.compute_full_grid()
+
         cmap = ListedColormap(['white', 'grey', 'black', 'red'])
         
         n_rows = len(thresholds)
@@ -676,28 +680,6 @@ class BaseLineModel:
             plt.close(fig)
 
 
-    def save_prediction_map(self, 
-                            save_path:str = "graph/model1_AP/predictions/"):
-        """ Predictions map at different thresholds.
-
-        Args:
-            save_path (str, optional): Saving path. Defaults to "graph/model1_AP/predictions/".
-        """
-        for specific_time_slice in range(self.full_grid_all.shape[0]):
-            grid_2d = self.full_grid_all[specific_time_slice, :, :]
-            plt.figure(figsize=(20, 8))
-            plt.imshow(grid_2d, cmap='viridis', interpolation='none')
-            plt.colorbar(label='M1 Flood Probability')
-            plt.title(f'Flood Probabilities - Time Slice {specific_time_slice}')
-            plt.xlabel('X Coordinate')
-            plt.ylabel('Y Coordinate')
-
-            isExist = os.path.exists(save_path)
-            if not isExist:
-                os.makedirs(save_path)
-            plt.savefig(f"{save_path}{specific_time_slice}.png")
-            plt.close()
-
     def save_prediction_map_and_labels(self, 
                             save_path:str = "graph/model1_AP/label_and_pred/"):
         """ Predictions map at different thresholds with labels.
@@ -705,6 +687,9 @@ class BaseLineModel:
         Args:
             save_path (str, optional): Saving path. Defaults to "graph/model1_AP/label_and_pred/".
         """
+        if self.full_grid_all is None:
+            self.compute_full_grid()
+
         font_size = 32
 
         for k, band_index in enumerate(self.labels.sel(time=slice(
@@ -742,6 +727,30 @@ class BaseLineModel:
 
 
 
+    def save_prediction_map(self, 
+                            save_path:str = "graph/model1_AP/predictions/"):
+        """ Predictions map at different thresholds.
+
+        Args:
+            save_path (str, optional): Saving path. Defaults to "graph/model1_AP/predictions/".
+        """
+        if self.full_grid_all is None:
+            self.compute_full_grid()
+        for specific_time_slice in range(self.full_grid_all.shape[0]):
+            grid_2d = self.full_grid_all[specific_time_slice, :, :]
+            plt.figure(figsize=(20, 8))
+            plt.imshow(grid_2d, cmap='viridis', interpolation='none')
+            plt.colorbar(label='M1 Flood Probability')
+            plt.title(f'Flood Probabilities - Time Slice {specific_time_slice}')
+            plt.xlabel('X Coordinate')
+            plt.ylabel('Y Coordinate')
+
+            isExist = os.path.exists(save_path)
+            if not isExist:
+                os.makedirs(save_path)
+            plt.savefig(f"{save_path}{specific_time_slice}.png")
+            plt.close()
+
     def save_error_map(self, 
                             save_path:str = "graph/model1_AP/save_error_map/"):
         """ Predictions map at different thresholds with labels.
@@ -749,7 +758,8 @@ class BaseLineModel:
         Args:
             save_path (str, optional): Saving path. Defaults to "graph/model1_AP/label_and_pred/".
         """
-        font_size = 32
+        if self.full_grid_all is None:
+            self.compute_full_grid()
 
         for k, band_index in enumerate(self.labels.sel(time=slice(
                             self.dataset_limits["train"]["start"],
@@ -757,28 +767,28 @@ class BaseLineModel:
                             )).time.values):
             labelmap = self.labels['__xarray_dataarray_variable__'][k].values
 
-            grid_2d = self.full_grid_all[k, :, :]
-            grid_2d[labelmap == -1] = np.nan
+            predictionmap = self.full_grid_all[k, :, :]
+            predictionmap[labelmap == -1] = np.nan
 
             labelmap[labelmap == -1] = np.nan
 
-            fig, axs = plt.subplots(1, 2, figsize=(32, 16))
-            cmap = plt.cm.bwr
+            cmap = plt.cm.seismic
             cmap.set_bad('#A5E0E4', 1.)
-
-            Errors = grid_2d - labelmap
+            errormap = predictionmap - labelmap
             plt.figure(figsize=(20, 8))
-            plt.imshow(grid_2d, cmap=cmap, interpolation='none')
+            plt.set_cmap(cmap)
+            norm = colors.TwoSlopeNorm(vmin=-1, vcenter=0, vmax=1)
 
+            plt.imshow(errormap, cmap=cmap, interpolation='none', norm=norm)
 
-
-            plt.tight_layout()
+            plt.colorbar(label='M1 Flood Errors -1 : flood missed, 1 : false alarm')
 
             isExist = os.path.exists(save_path)
             if not isExist:
                 os.makedirs(save_path)
             plt.savefig(f"{save_path}{band_index}.png")
-            plt.close(fig)
+            plt.close()
+
 
     def verb_indiv(self, 
                    individual: List[Any]):
