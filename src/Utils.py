@@ -86,3 +86,9 @@ def stack_if_exists(X_combined, y_combined, X, y):
         y_combined = np.hstack((y_combined, y))
 
     return X_combined, y_combined
+
+
+
+def split_time_index(band_index):
+    band_index_str = str(band_index)
+    return band_index_str.split(":")[0]

@@ -105,7 +105,7 @@ class BaseLineModel:
         self.inf_dynamic_features_FR_path = inf_dynamic_features_FR_path
         self.static_features_FR_path = static_features_FR_path
         self.labels_ERA5_path = labels_ERA5_path
-
+        
         self.compute_full_test_set = compute_full_test_set
         if (labels_root_path is None) | (
             (dynamic_features_path is None) & (static_features_root_path is None)
@@ -845,7 +845,7 @@ class BaseLineModel:
 
     def evalModel(self, 
                   individual: list, 
-                  save_model: bool = False) -> Tuple[float]:
+                  is_GA: bool = True) -> Tuple[float]:
         """Evaluates a genetic algorithm individual by loading the individual and returning its auc.
 
         Parameters
@@ -860,7 +860,7 @@ class BaseLineModel:
             The AUC of the individual (computed on validation data or with a Xval), 
             used as fitness in genetic algorithms.
         """
-        return self.load_indiv(individual, save_model), #comma is important to return a tuple
+        return self.load_indiv(individual, is_GA), #comma is important to return a tuple
 
     def select_features(self, individual: list):
         """Selects features based on the selected indices.
@@ -978,7 +978,7 @@ class BaseLineModel:
         if mode == "":
             mode = self.score_mode
 
-        print(dataset)
+        print("i",dataset)
         if dataset == "Val":
             X = self.X_val[:,self.selected_features]
             y = self.y_val
@@ -1348,7 +1348,6 @@ class BaseLineModel:
                 X = self.Full_X_test[:,self.selected_features]
                 y = self.Full_y_test
             elif dataset == "Val":
-                print("Val")
                 X = self.X_val[:,self.selected_features]
                 y = self.y_val
             else:
@@ -1414,7 +1413,6 @@ class BaseLineModel:
             X = self.Full_X_test[:,self.selected_features]
             y = self.Full_y_test
         elif dataset == "Val":
-            print("Val")
             X = self.X_val[:,self.selected_features]
             y = self.y_val
         else:
@@ -1481,6 +1479,7 @@ class BaseLineModel:
             The name of the file to save the best model parameters.
         
         """
+        self.is_GA = True
         creator.create("FitnessMax", base.Fitness, weights=(1.0,))  
         creator.create("Individual", list, fitness=creator.FitnessMax)
         random.seed(self.seed)
@@ -1625,7 +1624,7 @@ class BaseLineModel:
             isExist = os.path.exists(save_path)
             if not isExist:
                 os.makedirs(save_path)
-            plt.savefig(f"{save_path}{band}.png")
+            plt.savefig(f"{save_path}{utils.split_time_index(band)}.png")
             plt.close()
     
     
@@ -1733,7 +1732,7 @@ class BaseLineModel:
             isExist = os.path.exists(save_path)
             if not isExist:
                 os.makedirs(save_path)
-            plt.savefig(f"{save_path}{band}.png")
+            plt.savefig(f"{save_path}{utils.split_time_index(band)}.png")
             plt.close()
     
     def print_proba_inf(self, 
@@ -1789,7 +1788,7 @@ class BaseLineModel:
             isExist = os.path.exists(save_path)
             if not isExist:
                 os.makedirs(save_path)
-            plt.savefig(f"{save_path}{band}.png")
+            plt.savefig(f"{save_path}{utils.split_time_index(band)}.png")
             plt.close()
 
 
@@ -1840,7 +1839,7 @@ class BaseLineModel:
 
         xr_array_score = xr_array_score.astype('float32')
 
-        xr_array_score.to_netcdf('localdata/Model2_Score_Full_Rez_inf.nc')
+        xr_array_score.to_netcdf('localdata/Model2_Score_Full_Rez_inf.nc', engine='h5netcdf')
 
 
     def save_prediction_map_and_labels(self, 
@@ -1869,6 +1868,6 @@ class BaseLineModel:
             isExist = os.path.exists(save_path)
             if not isExist:
                 os.makedirs(save_path)
-            plt.savefig(f"{save_path}{band_index}.png")
+            plt.savefig(f"{save_path}{utils.split_time_index(band_index)}.png")
             plt.close(fig)
 

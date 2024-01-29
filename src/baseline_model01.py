@@ -676,7 +676,7 @@ class BaseLineModel:
             isExist = os.path.exists(save_path)
             if not isExist:
                 os.makedirs(save_path)
-            plt.savefig(f"{save_path}{band_index}.png")
+            plt.savefig(f"{save_path}{utils.split_time_index(band_index)}.png")
             plt.close(fig)
 
 
@@ -722,7 +722,7 @@ class BaseLineModel:
             isExist = os.path.exists(save_path)
             if not isExist:
                 os.makedirs(save_path)
-            plt.savefig(f"{save_path}{band_index}.png")
+            plt.savefig(f"{save_path}{utils.split_time_index(band_index)}.png")
             plt.close(fig)
 
 
@@ -786,7 +786,7 @@ class BaseLineModel:
             isExist = os.path.exists(save_path)
             if not isExist:
                 os.makedirs(save_path)
-            plt.savefig(f"{save_path}{band_index}.png")
+            plt.savefig(f"{save_path}{utils.split_time_index(band_index)}.png")
             plt.close()
 
 
