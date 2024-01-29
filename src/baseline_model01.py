@@ -167,6 +167,115 @@ class BaseLineModel:
     
 
     
+
+    def compute_total_features(self, 
+                               dynamic_indices:List[int], 
+                               histodept:int, 
+                               histodept2:int, 
+                               num_statics:int, 
+                               use_derivative:bool)->int:
+        """ Compute the total number of features used in the model, 
+        including the constructed derivative of the dynamic features.
+
+        Args:
+            dynamic_indices (): dynamic features indices
+            histodept (int): number of layers to average for the dynamic features
+            histodept2 (int): number of layers to average for the dynamic features (second part)
+            num_statics (int): number of static features
+            use_derivative (int): compute the derivative of the dynamic features
+
+        Returns:
+            int : total number of features used in the model
+        """
+        total_features = num_statics
+        for _ in dynamic_indices:
+            if histodept > 0:
+                total_features += 1
+            if histodept2 > 0:
+                total_features += 1 
+            if use_derivative & (histodept > 1):
+                total_features += 1 
+            if use_derivative & (histodept2 > 1):
+                total_features += 1
+        return total_features
+
+    def create_feature_array(self, 
+                             total_features:int)->Tuple[np.ndarray, int]:
+        """ Create the array of features
+
+        Args:
+            total_features (int): total number of features used in the model
+
+        Returns:
+            Tuple[np.ndarray, int]: array of features.
+        """
+        return np.empty((self.x_dim * self.y_dim, total_features)), 0
+
+    def populate_feature_array(self, 
+                               feature_array: np.ndarray, 
+                               feature_index: int,
+                               static_indices: List[int], 
+                               dynamic_indices: List[int], 
+                               filtered_dynamic_features: xr.Dataset, 
+                               histodept: int,
+                               histodept2: int,
+                               use_derivative:bool)->Tuple[np.ndarray, int]:
+        """ Populate the array of features
+
+        Args:
+            feature_array (np.ndarray): array of features
+            feature_index (int): index of the feature in the array
+            static_indices (List[int]): list of static indices
+            dynamic_indices (List[int]): list of dynamic indices
+            filtered_dynamic_features (xr.Dataset): filtered dynamic features
+            histodept (int): history depth for averaging the dynamic features
+            histodept2 (int): history depth for averaging the dynamic features (second part)
+            use_derivative (bool): compute the derivative of the dynamic features 
+
+        Returns:
+            Tuple[np.ndarray, int]: _description_
+        """
+        for static_index in static_indices:
+            var = self.all_static_vars[static_index]
+            feature_array[:, feature_index] = self.static_features[var].data.reshape(self.x_dim * self.y_dim)
+            feature_index += 1
+
+        for var_index in dynamic_indices:
+            var = self.all_dynamic_vars[var_index]
+            feature_index, feature_array = self.process_dynamic_feature(filtered_dynamic_features[var], histodept, feature_array, feature_index, use_derivative)
+            feature_index, feature_array = self.process_dynamic_feature(filtered_dynamic_features[var], histodept2, feature_array, feature_index, use_derivative)
+        return feature_array, feature_index
+
+    def create_target(self, 
+                      time:str)->np.ndarray:
+        """ Reshape the target array
+        Args:
+            time (str): date of the target
+        Returns:
+            np.ndarray: target array
+        """
+        return self.labels['__xarray_dataarray_variable__'].sel(time=time).data.reshape(-1)
+
+    def get_features_and_targets(self, indices, use_derivative, histodept, histodept2):
+        features_all_bands = []
+        targets_all_bands = []
+        static_indices, dynamic_indices = self.index_splitter(indices, histodept, histodept2, use_derivative)
+        num_statics = len(static_indices)
+
+        for band in self.labels.time.values:
+            start_date = pd.to_datetime(band)
+            filtered_dynamic_features = self.dynamic_features.sel(time=slice(None, start_date))
+
+            total_features = self.compute_total_features(dynamic_indices, histodept, histodept2, num_statics, use_derivative)
+            feature_array, feature_index = self.create_feature_array(total_features)
+            feature_array, feature_index = self.populate_feature_array(feature_array, feature_index, static_indices, dynamic_indices, filtered_dynamic_features, histodept, histodept2, use_derivative)
+
+            features_all_bands.append(feature_array if total_features > 0 else None)
+            targets_all_bands.append(self.create_target(band))
+
+        return features_all_bands, targets_all_bands
+
+
     def train_flood_prediction_model(self, 
                                      indices:List[int], 
                                      use_derivative:bool,
@@ -190,49 +299,7 @@ class BaseLineModel:
             Tuple[RandomForestClassifier, float]: Trained random forest model and the score of the model
         """
 
-        features_all_bands = []
-        targets_all_bands = []
-        static_indices, dynamic_indices = self.index_splitter(indices, histodept, histodept2, use_derivative)
-        num_statics = len(static_indices)
-        for band in self.labels.time.values:
-            start_date = pd.to_datetime(band)
-
-            filtered_dynamic_features = self.dynamic_features.sel(time=slice(None, start_date))
-            # compute the total number of features
-            total_features = num_statics
-            if len(dynamic_indices) > 0:
-                for _ in dynamic_indices:
-                    if histodept > 0:
-                        total_features += 1
-                    if histodept2 > 0:
-                        total_features += 1 
-                    if use_derivative & (histodept > 1):
-                        total_features += 1 
-                    if use_derivative & (histodept2 > 1):
-                        total_features += 1
-
-            # create an empty array for features
-            feature_array = np.empty((self.x_dim * self.y_dim, total_features))
-            feature_index = 0
-
-            # add static features if any
-            for static_index in static_indices:
-                var = self.all_static_vars[static_index]
-                feature_array[:, feature_index] = self.static_features[var].data.reshape(self.x_dim * self.y_dim)
-                feature_index += 1
-
-            # add average and derivative of dynamic features if any
-            for var_index in dynamic_indices:
-                var = self.all_dynamic_vars[var_index]
-                feature_index, feature_array = self.process_dynamic_feature(filtered_dynamic_features[var], histodept, feature_array, feature_index, use_derivative)
-                feature_index, feature_array = self.process_dynamic_feature(filtered_dynamic_features[var], histodept2, feature_array, feature_index, use_derivative)
-
-            feature_temp = feature_array if total_features > 0 else None
-
-            features_all_bands.append(feature_temp)
-
-            target = self.labels['__xarray_dataarray_variable__'].sel(time=band).data.reshape(-1)
-            targets_all_bands.append(target)
+        features_all_bands, targets_all_bands = self.get_features_and_targets(indices, use_derivative, histodept, histodept2)
 
         # split train test
         temp_data = {'train': {'X':  None, 'y':  None}, 
@@ -278,19 +345,29 @@ class BaseLineModel:
 
         # keep the model and the data if needed (sometime we just want to know the AUC without saving the model)
         if ~is_GA:
-            self.model = model
-            self.X_train = temp_data['train']['X']
-            self.X_val = temp_data['val']['X']
-            self.X_test = temp_data['test']['X']
-            self.X_all = temp_data['all']['X']
-            self.X_inf = temp_data['inf']['X']
-            self.y_train =  temp_data['train']['y']
-            self.y_val = temp_data['val']['y']
-            self.y_test = temp_data['test']['y']
-            self.y_all = temp_data['all']['y']
-            self.mask = ~ np.isnan(target)
+            self.save_temp_data_to_PV(temp_data,model)
+
         return (model, 
                 scores.mean())
+
+
+    def save_temp_data_to_PV(self,temp_data,model):
+        """ Save the model and the data if needed (sometime we just want to know the AUC without saving the model)
+
+        Args:
+            temp_data (_type_): flatten data
+            model (_type_): trained model
+        """
+        self.model = model
+        self.X_train = temp_data['train']['X']
+        self.X_val = temp_data['val']['X']
+        self.X_test = temp_data['test']['X']
+        self.X_all = temp_data['all']['X']
+        self.X_inf = temp_data['inf']['X']
+        self.y_train =  temp_data['train']['y']
+        self.y_val = temp_data['val']['y']
+        self.y_test = temp_data['test']['y']
+        self.y_all = temp_data['all']['y']
 
     def process_dynamic_feature(self, 
                                 feature: xr.DataArray, # dynamic feature
