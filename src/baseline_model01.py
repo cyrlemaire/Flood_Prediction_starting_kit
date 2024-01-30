@@ -13,6 +13,8 @@ import os
 from matplotlib.colors import ListedColormap, BoundaryNorm
 import src.Utils as utils
 import matplotlib.colors as colors
+import math
+import matplotlib.patches as mpatches
 
 class BaseLineModel:
     """Base class for the baseline model.
@@ -707,53 +709,77 @@ class BaseLineModel:
         """
         if self.full_grid_all is None:
             self.compute_full_grid()
-
-        cmap = ListedColormap(['white', 'grey', 'black', 'red'])
+        font_size = 32
         
-        n_rows = len(thresholds)
-        boundaries = [-0.5, 0.5, 1.5, 2.5, 3.5]
-        norm = BoundaryNorm(boundaries, cmap.N, clip=True)
-
+        n_cols = 2
+        n_rows = math.ceil((len(thresholds) + 2) / n_cols)
+        cmap1 = plt.cm.viridis_r
+        cmap1.set_bad('#A5E0E4', 1.)
         for k, band_index in enumerate(self.labels.sel(time=slice(
                             self.dataset_limits["train"]["start"],
                             self.dataset_limits["train"]["end"],
                             )).time.values):
-            fig, axs = plt.subplots(n_rows + 2, 1, figsize=(20, 40))
+            fig, axs = plt.subplots(n_rows, n_cols, figsize=(20, 25))
+            label_map = self.labels['__xarray_dataarray_variable__'][k].values
+            pred_map = self.full_grid_all[k, :, :]
+            
+            water_mask = label_map == -1
+            pred_map[water_mask] = np.nan
+            label_map[water_mask] = np.nan
 
-            grid_2d = self.full_grid_all[k, :, :]
-            x_coord_0 = grid_2d.shape[1] * 0.8
+            
+            axs[0,0].imshow(pred_map, cmap=cmap1, interpolation='none')
+            axs[0,0].set_title('Predicted Flood Probabilities', fontsize=font_size)
+            axs[0,0].axis('off')
+            
+            
+            legend_elements = [mpatches.Patch(color=plt.cm.viridis(0), label='Flood'),
+                            mpatches.Patch(color=plt.cm.viridis_r(0), label='No Flood')]
 
-            axs[0].imshow(grid_2d, cmap='viridis', interpolation='none')
-            axs[0].set_title('Predicted Flood Probabilities')
-            axs[0].axvline(x=x_coord_0, color='red', linestyle='--')
+            axs[0,1].imshow(label_map, cmap=cmap1, interpolation='none')
+            axs[0,1].set_title('Label', fontsize=font_size)
+            axs[0,1].axis('off')
+            axs[0,1].legend(handles=legend_elements, loc="upper right")
 
-            labelmap = self.labels['__xarray_dataarray_variable__'][k]
-
-            axs[1].imshow(labelmap, cmap='viridis')
-            axs[1].set_title('Label')
-            axs[1].axvline(x=x_coord_0, color='red', linestyle='--')
+            legend_elements = [mpatches.Patch(color='white', label='TN'),
+                            mpatches.Patch(color='grey', label='FN'),
+                            mpatches.Patch(color='black', label='TP'),
+                            mpatches.Patch(color='red', label='FP'),
+                            mpatches.Patch(color='#A5E0E4', label='Water')]
 
             for i, threshtest in enumerate(thresholds):
-                grid_2d2_tmp = grid_2d.copy()
 
-                grid_2d2_tmp[grid_2d < threshtest] = 0
-                grid_2d2_tmp[grid_2d >= threshtest] = 1
+                cmap2 = ListedColormap(['white', 'grey', 'black', 'red'])
+                cmap2.set_bad('#A5E0E4', 1.)
+                boundaries = [-0.5, 0.5, 1.5, 2.5, 3.5]
+                norm = BoundaryNorm(boundaries, cmap2.N, clip=True)
+                pred_map_at_th = pred_map.copy()
 
-                classification_results = np.zeros_like(grid_2d2_tmp)
-                classification_results[(grid_2d2_tmp == 0) & (labelmap == 0)] = 0  # TN
-                classification_results[(grid_2d2_tmp == 1) & (labelmap == 0)] = 1
-                classification_results[(grid_2d2_tmp == 1) & (labelmap == 1)] = 2
-                classification_results[(grid_2d2_tmp == 0) & (labelmap == 1)] = 3  # TP
+                pred_map_at_th[pred_map < threshtest] = 0
+                pred_map_at_th[pred_map >= threshtest] = 1
 
-                im = axs[2 + i].imshow(classification_results, cmap=cmap, norm=norm, interpolation='none')
-                axs[2 + i].set_title(f"Threshold: {threshtest}")
+                classification_results = np.zeros_like(pred_map_at_th)
+                classification_results[(pred_map_at_th == 0) & (label_map == 0)] = 0  # TN
+                classification_results[(pred_map_at_th == 1) & (label_map == 0)] = 1
+                classification_results[(pred_map_at_th == 1) & (label_map == 1)] = 2
+                classification_results[(pred_map_at_th == 0) & (label_map == 1)] = 3  # TP
+                classification_results[water_mask] = np.nan
+
+                xi = i // n_cols+1
+                yi = i % n_cols
+                axs[xi,yi].imshow(classification_results, cmap=cmap2, norm=norm, interpolation='none')
+                axs[xi,yi].set_title(f"Threshold: {threshtest}", fontsize=font_size)
+                axs[xi,yi].axis('off')
+                axs[xi,yi].legend(handles=legend_elements, loc="upper right")
+
 
             plt.tight_layout()
-
+            #fig.suptitle(f"Week : {utils.split_time_index(band_index)}", fontsize=font_size+10)
             isExist = os.path.exists(save_path)
             if not isExist:
                 os.makedirs(save_path)
             plt.savefig(f"{save_path}{utils.split_time_index(band_index)}.png")
+
             plt.close(fig)
 
 
@@ -775,27 +801,29 @@ class BaseLineModel:
                             )).time.values):
             labelmap = self.labels['__xarray_dataarray_variable__'][k].values
 
-            grid_2d = self.full_grid_all[k, :, :]
-            grid_2d[labelmap == -1] = np.nan
+            predictionmap = self.full_grid_all[k, :, :]
+            predictionmap[labelmap == -1] = np.nan
 
             labelmap[labelmap == -1] = np.nan
 
-            fig, axs = plt.subplots(1, 2, figsize=(32, 16))
+            fig, axs = plt.subplots(1, 2, figsize=(35, 18))
             cmap = plt.cm.gray_r
             cmap.set_bad('#A5E0E4', 1.)
 
-            axs[0].imshow(grid_2d, cmap=cmap, interpolation='none')
+            axs[0].imshow(predictionmap, cmap=cmap, interpolation='none')
             axs[0].set_title('M1 Flood Probabilities', fontsize=font_size)
+            axs[0].axis('off')
 
             axs[1].imshow(labelmap, cmap=cmap, interpolation='none')
             axs[1].set_title(f'Label', fontsize=font_size)
+            axs[1].axis('off')
 
             # Increase label size for axis ticks
             for ax in axs:
                 ax.tick_params(axis='both', which='major', labelsize=font_size)
 
             plt.tight_layout()
-
+            
             isExist = os.path.exists(save_path)
             if not isExist:
                 os.makedirs(save_path)
@@ -811,21 +839,32 @@ class BaseLineModel:
         Args:
             save_path (str, optional): Saving path. Defaults to "graph/model1_AP/predictions/".
         """
+        font_size = 12
+
         if self.full_grid_all is None:
             self.compute_full_grid()
-        for specific_time_slice in range(self.full_grid_all.shape[0]):
-            grid_2d = self.full_grid_all[specific_time_slice, :, :]
-            plt.figure(figsize=(20, 8))
-            plt.imshow(grid_2d, cmap='viridis', interpolation='none')
+        cmap = plt.cm.viridis_r
+        cmap.set_bad('#A5E0E4', 1.)
+#       for specific_time_slice in range(self.full_grid_all.shape[0]):
+        for k, band_index in enumerate(self.labels.sel(time=slice(
+                            self.dataset_limits["train"]["start"],
+                            self.dataset_limits["train"]["end"],
+                            )).time.values):
+            labelmap = self.labels['__xarray_dataarray_variable__'][k].values
+
+            predictionmap = self.full_grid_all[k, :, :]
+            predictionmap[labelmap == -1] = np.nan
+
+            plt.figure(figsize=(15, 10))
+            plt.imshow(predictionmap, cmap=cmap, interpolation='none')
             plt.colorbar(label='M1 Flood Probability')
-            plt.title(f'Flood Probabilities - Time Slice {specific_time_slice}')
-            plt.xlabel('X Coordinate')
-            plt.ylabel('Y Coordinate')
+            plt.title(f'Flood Probabilities - Time Slice {band_index}',fontsize=font_size)
+            plt.axis("off")
 
             isExist = os.path.exists(save_path)
             if not isExist:
                 os.makedirs(save_path)
-            plt.savefig(f"{save_path}{specific_time_slice}.png")
+            plt.savefig(f"{save_path}{utils.split_time_index(band_index)}.png")
             plt.close()
 
     def save_error_map(self, 
@@ -835,6 +874,8 @@ class BaseLineModel:
         Args:
             save_path (str, optional): Saving path. Defaults to "graph/model1_AP/label_and_pred/".
         """
+        font_size = 12
+
         if self.full_grid_all is None:
             self.compute_full_grid()
 
@@ -852,13 +893,15 @@ class BaseLineModel:
             cmap = plt.cm.seismic
             cmap.set_bad('#A5E0E4', 1.)
             errormap = predictionmap - labelmap
-            plt.figure(figsize=(20, 8))
+            plt.figure(figsize=(15, 10))
             plt.set_cmap(cmap)
             norm = colors.TwoSlopeNorm(vmin=-1, vcenter=0, vmax=1)
 
             plt.imshow(errormap, cmap=cmap, interpolation='none', norm=norm)
 
             plt.colorbar(label='M1 Flood Errors -1 : flood missed, 1 : false alarm')
+            plt.title(f'Flood Probabilities - Time Slice {band_index}',fontsize=font_size)
+            plt.axis("off")
 
             isExist = os.path.exists(save_path)
             if not isExist:
@@ -939,14 +982,14 @@ class BaseLineModel:
                 raise ValueError("dataset must be either Val, Train or Test")
             y_pred_proba_val = utils.batch_predict(self.model,X, is_proba = True)
             y_pred_val = utils.batch_predict(self.model,X, is_proba = False)
-            for metric in ["roc", "AP", "BrierScore", "f1", "precision", "recall", "acc"]:
+            for metric in ["roc", "BrierScore", "f1", "precision", "recall", "acc"]:
                 score = self.compute_metric(y_pred_proba_val,
                                             y_pred_val,
                                             y, 
                                             mode=metric)
                 print(f"{metric} : {score}")
-
-            print(f"")
+            print(f"")    
+        print(f"f1, precision, recall and acc are computed at threshold 0.5")
 
 
     def compute_metric(self, 

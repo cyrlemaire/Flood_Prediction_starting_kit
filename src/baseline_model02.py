@@ -1613,8 +1613,6 @@ class BaseLineModel:
 
             plt.colorbar(im, label='Predicted Flood Probability')
             plt.title(f'2D Map of Predicted Flood Probabilities - Time Slice {band}')
-            plt.xlabel('X Coordinate')
-            plt.ylabel('Y Coordinate')
             plt.legend(fontsize=font_size)
 
             # Adjusting tick label font size
