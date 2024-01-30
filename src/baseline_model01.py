@@ -13,6 +13,8 @@ import os
 from matplotlib.colors import ListedColormap, BoundaryNorm
 import src.Utils as utils
 import matplotlib.colors as colors
+import math
+import matplotlib.patches as mpatches
 
 class BaseLineModel:
     """Base class for the baseline model.
@@ -167,6 +169,115 @@ class BaseLineModel:
     
 
     
+
+    def compute_total_features(self, 
+                               dynamic_indices:List[int], 
+                               histodept:int, 
+                               histodept2:int, 
+                               num_statics:int, 
+                               use_derivative:bool)->int:
+        """ Compute the total number of features used in the model, 
+        including the constructed derivative of the dynamic features.
+
+        Args:
+            dynamic_indices (): dynamic features indices
+            histodept (int): number of layers to average for the dynamic features
+            histodept2 (int): number of layers to average for the dynamic features (second part)
+            num_statics (int): number of static features
+            use_derivative (int): compute the derivative of the dynamic features
+
+        Returns:
+            int : total number of features used in the model
+        """
+        total_features = num_statics
+        for _ in dynamic_indices:
+            if histodept > 0:
+                total_features += 1
+            if histodept2 > 0:
+                total_features += 1 
+            if use_derivative & (histodept > 1):
+                total_features += 1 
+            if use_derivative & (histodept2 > 1):
+                total_features += 1
+        return total_features
+
+    def create_feature_array(self, 
+                             total_features:int)->Tuple[np.ndarray, int]:
+        """ Create the array of features
+
+        Args:
+            total_features (int): total number of features used in the model
+
+        Returns:
+            Tuple[np.ndarray, int]: array of features.
+        """
+        return np.empty((self.x_dim * self.y_dim, total_features)), 0
+
+    def populate_feature_array(self, 
+                               feature_array: np.ndarray, 
+                               feature_index: int,
+                               static_indices: List[int], 
+                               dynamic_indices: List[int], 
+                               filtered_dynamic_features: xr.Dataset, 
+                               histodept: int,
+                               histodept2: int,
+                               use_derivative:bool)->Tuple[np.ndarray, int]:
+        """ Populate the array of features
+
+        Args:
+            feature_array (np.ndarray): array of features
+            feature_index (int): index of the feature in the array
+            static_indices (List[int]): list of static indices
+            dynamic_indices (List[int]): list of dynamic indices
+            filtered_dynamic_features (xr.Dataset): filtered dynamic features
+            histodept (int): history depth for averaging the dynamic features
+            histodept2 (int): history depth for averaging the dynamic features (second part)
+            use_derivative (bool): compute the derivative of the dynamic features 
+
+        Returns:
+            Tuple[np.ndarray, int]: _description_
+        """
+        for static_index in static_indices:
+            var = self.all_static_vars[static_index]
+            feature_array[:, feature_index] = self.static_features[var].data.reshape(self.x_dim * self.y_dim)
+            feature_index += 1
+
+        for var_index in dynamic_indices:
+            var = self.all_dynamic_vars[var_index]
+            feature_index, feature_array = self.process_dynamic_feature(filtered_dynamic_features[var], histodept, feature_array, feature_index, use_derivative)
+            feature_index, feature_array = self.process_dynamic_feature(filtered_dynamic_features[var], histodept2, feature_array, feature_index, use_derivative)
+        return feature_array, feature_index
+
+    def create_target(self, 
+                      time:str)->np.ndarray:
+        """ Reshape the target array
+        Args:
+            time (str): date of the target
+        Returns:
+            np.ndarray: target array
+        """
+        return self.labels['__xarray_dataarray_variable__'].sel(time=time).data.reshape(-1)
+
+    def get_features_and_targets(self, indices, use_derivative, histodept, histodept2):
+        features_all_bands = []
+        targets_all_bands = []
+        static_indices, dynamic_indices = self.index_splitter(indices, histodept, histodept2, use_derivative)
+        num_statics = len(static_indices)
+
+        for band in self.labels.time.values:
+            start_date = pd.to_datetime(band)
+            filtered_dynamic_features = self.dynamic_features.sel(time=slice(None, start_date))
+
+            total_features = self.compute_total_features(dynamic_indices, histodept, histodept2, num_statics, use_derivative)
+            feature_array, feature_index = self.create_feature_array(total_features)
+            feature_array, feature_index = self.populate_feature_array(feature_array, feature_index, static_indices, dynamic_indices, filtered_dynamic_features, histodept, histodept2, use_derivative)
+
+            features_all_bands.append(feature_array if total_features > 0 else None)
+            targets_all_bands.append(self.create_target(band))
+
+        return features_all_bands, targets_all_bands
+
+
     def train_flood_prediction_model(self, 
                                      indices:List[int], 
                                      use_derivative:bool,
@@ -190,49 +301,7 @@ class BaseLineModel:
             Tuple[RandomForestClassifier, float]: Trained random forest model and the score of the model
         """
 
-        features_all_bands = []
-        targets_all_bands = []
-        static_indices, dynamic_indices = self.index_splitter(indices, histodept, histodept2, use_derivative)
-        num_statics = len(static_indices)
-        for band in self.labels.time.values:
-            start_date = pd.to_datetime(band)
-
-            filtered_dynamic_features = self.dynamic_features.sel(time=slice(None, start_date))
-            # compute the total number of features
-            total_features = num_statics
-            if len(dynamic_indices) > 0:
-                for _ in dynamic_indices:
-                    if histodept > 0:
-                        total_features += 1
-                    if histodept2 > 0:
-                        total_features += 1 
-                    if use_derivative & (histodept > 1):
-                        total_features += 1 
-                    if use_derivative & (histodept2 > 1):
-                        total_features += 1
-
-            # create an empty array for features
-            feature_array = np.empty((self.x_dim * self.y_dim, total_features))
-            feature_index = 0
-
-            # add static features if any
-            for static_index in static_indices:
-                var = self.all_static_vars[static_index]
-                feature_array[:, feature_index] = self.static_features[var].data.reshape(self.x_dim * self.y_dim)
-                feature_index += 1
-
-            # add average and derivative of dynamic features if any
-            for var_index in dynamic_indices:
-                var = self.all_dynamic_vars[var_index]
-                feature_index, feature_array = self.process_dynamic_feature(filtered_dynamic_features[var], histodept, feature_array, feature_index, use_derivative)
-                feature_index, feature_array = self.process_dynamic_feature(filtered_dynamic_features[var], histodept2, feature_array, feature_index, use_derivative)
-
-            feature_temp = feature_array if total_features > 0 else None
-
-            features_all_bands.append(feature_temp)
-
-            target = self.labels['__xarray_dataarray_variable__'].sel(time=band).data.reshape(-1)
-            targets_all_bands.append(target)
+        features_all_bands, targets_all_bands = self.get_features_and_targets(indices, use_derivative, histodept, histodept2)
 
         # split train test
         temp_data = {'train': {'X':  None, 'y':  None}, 
@@ -278,19 +347,29 @@ class BaseLineModel:
 
         # keep the model and the data if needed (sometime we just want to know the AUC without saving the model)
         if ~is_GA:
-            self.model = model
-            self.X_train = temp_data['train']['X']
-            self.X_val = temp_data['val']['X']
-            self.X_test = temp_data['test']['X']
-            self.X_all = temp_data['all']['X']
-            self.X_inf = temp_data['inf']['X']
-            self.y_train =  temp_data['train']['y']
-            self.y_val = temp_data['val']['y']
-            self.y_test = temp_data['test']['y']
-            self.y_all = temp_data['all']['y']
-            self.mask = ~ np.isnan(target)
+            self.save_temp_data_to_PV(temp_data,model)
+
         return (model, 
                 scores.mean())
+
+
+    def save_temp_data_to_PV(self,temp_data,model):
+        """ Save the model and the data if needed (sometime we just want to know the AUC without saving the model)
+
+        Args:
+            temp_data (_type_): flatten data
+            model (_type_): trained model
+        """
+        self.model = model
+        self.X_train = temp_data['train']['X']
+        self.X_val = temp_data['val']['X']
+        self.X_test = temp_data['test']['X']
+        self.X_all = temp_data['all']['X']
+        self.X_inf = temp_data['inf']['X']
+        self.y_train =  temp_data['train']['y']
+        self.y_val = temp_data['val']['y']
+        self.y_test = temp_data['test']['y']
+        self.y_all = temp_data['all']['y']
 
     def process_dynamic_feature(self, 
                                 feature: xr.DataArray, # dynamic feature
@@ -630,53 +709,77 @@ class BaseLineModel:
         """
         if self.full_grid_all is None:
             self.compute_full_grid()
-
-        cmap = ListedColormap(['white', 'grey', 'black', 'red'])
+        font_size = 32
         
-        n_rows = len(thresholds)
-        boundaries = [-0.5, 0.5, 1.5, 2.5, 3.5]
-        norm = BoundaryNorm(boundaries, cmap.N, clip=True)
-
+        n_cols = 2
+        n_rows = math.ceil((len(thresholds) + 2) / n_cols)
+        cmap1 = plt.cm.viridis_r
+        cmap1.set_bad('#A5E0E4', 1.)
         for k, band_index in enumerate(self.labels.sel(time=slice(
                             self.dataset_limits["train"]["start"],
                             self.dataset_limits["train"]["end"],
                             )).time.values):
-            fig, axs = plt.subplots(n_rows + 2, 1, figsize=(20, 40))
+            fig, axs = plt.subplots(n_rows, n_cols, figsize=(20, 25))
+            label_map = self.labels['__xarray_dataarray_variable__'][k].values
+            pred_map = self.full_grid_all[k, :, :]
+            
+            water_mask = label_map == -1
+            pred_map[water_mask] = np.nan
+            label_map[water_mask] = np.nan
 
-            grid_2d = self.full_grid_all[k, :, :]
-            x_coord_0 = grid_2d.shape[1] * 0.8
+            
+            axs[0,0].imshow(pred_map, cmap=cmap1, interpolation='none')
+            axs[0,0].set_title('Predicted Flood Probabilities', fontsize=font_size)
+            axs[0,0].axis('off')
+            
+            
+            legend_elements = [mpatches.Patch(color=plt.cm.viridis(0), label='Flood'),
+                            mpatches.Patch(color=plt.cm.viridis_r(0), label='No Flood')]
 
-            axs[0].imshow(grid_2d, cmap='viridis', interpolation='none')
-            axs[0].set_title('Predicted Flood Probabilities')
-            axs[0].axvline(x=x_coord_0, color='red', linestyle='--')
+            axs[0,1].imshow(label_map, cmap=cmap1, interpolation='none')
+            axs[0,1].set_title('Label', fontsize=font_size)
+            axs[0,1].axis('off')
+            axs[0,1].legend(handles=legend_elements, loc="upper right")
 
-            labelmap = self.labels['__xarray_dataarray_variable__'][k]
-
-            axs[1].imshow(labelmap, cmap='viridis')
-            axs[1].set_title('Label')
-            axs[1].axvline(x=x_coord_0, color='red', linestyle='--')
+            legend_elements = [mpatches.Patch(color='white', label='TN'),
+                            mpatches.Patch(color='grey', label='FN'),
+                            mpatches.Patch(color='black', label='TP'),
+                            mpatches.Patch(color='red', label='FP'),
+                            mpatches.Patch(color='#A5E0E4', label='Water')]
 
             for i, threshtest in enumerate(thresholds):
-                grid_2d2_tmp = grid_2d.copy()
 
-                grid_2d2_tmp[grid_2d < threshtest] = 0
-                grid_2d2_tmp[grid_2d >= threshtest] = 1
+                cmap2 = ListedColormap(['white', 'grey', 'black', 'red'])
+                cmap2.set_bad('#A5E0E4', 1.)
+                boundaries = [-0.5, 0.5, 1.5, 2.5, 3.5]
+                norm = BoundaryNorm(boundaries, cmap2.N, clip=True)
+                pred_map_at_th = pred_map.copy()
 
-                classification_results = np.zeros_like(grid_2d2_tmp)
-                classification_results[(grid_2d2_tmp == 0) & (labelmap == 0)] = 0  # TN
-                classification_results[(grid_2d2_tmp == 1) & (labelmap == 0)] = 1
-                classification_results[(grid_2d2_tmp == 1) & (labelmap == 1)] = 2
-                classification_results[(grid_2d2_tmp == 0) & (labelmap == 1)] = 3  # TP
+                pred_map_at_th[pred_map < threshtest] = 0
+                pred_map_at_th[pred_map >= threshtest] = 1
 
-                im = axs[2 + i].imshow(classification_results, cmap=cmap, norm=norm, interpolation='none')
-                axs[2 + i].set_title(f"Threshold: {threshtest}")
+                classification_results = np.zeros_like(pred_map_at_th)
+                classification_results[(pred_map_at_th == 0) & (label_map == 0)] = 0  # TN
+                classification_results[(pred_map_at_th == 1) & (label_map == 0)] = 1
+                classification_results[(pred_map_at_th == 1) & (label_map == 1)] = 2
+                classification_results[(pred_map_at_th == 0) & (label_map == 1)] = 3  # TP
+                classification_results[water_mask] = np.nan
+
+                xi = i // n_cols+1
+                yi = i % n_cols
+                axs[xi,yi].imshow(classification_results, cmap=cmap2, norm=norm, interpolation='none')
+                axs[xi,yi].set_title(f"Threshold: {threshtest}", fontsize=font_size)
+                axs[xi,yi].axis('off')
+                axs[xi,yi].legend(handles=legend_elements, loc="upper right")
+
 
             plt.tight_layout()
-
+            #fig.suptitle(f"Week : {utils.split_time_index(band_index)}", fontsize=font_size+10)
             isExist = os.path.exists(save_path)
             if not isExist:
                 os.makedirs(save_path)
-            plt.savefig(f"{save_path}{band_index}.png")
+            plt.savefig(f"{save_path}{utils.split_time_index(band_index)}.png")
+
             plt.close(fig)
 
 
@@ -698,31 +801,33 @@ class BaseLineModel:
                             )).time.values):
             labelmap = self.labels['__xarray_dataarray_variable__'][k].values
 
-            grid_2d = self.full_grid_all[k, :, :]
-            grid_2d[labelmap == -1] = np.nan
+            predictionmap = self.full_grid_all[k, :, :]
+            predictionmap[labelmap == -1] = np.nan
 
             labelmap[labelmap == -1] = np.nan
 
-            fig, axs = plt.subplots(1, 2, figsize=(32, 16))
+            fig, axs = plt.subplots(1, 2, figsize=(35, 18))
             cmap = plt.cm.gray_r
             cmap.set_bad('#A5E0E4', 1.)
 
-            axs[0].imshow(grid_2d, cmap=cmap, interpolation='none')
+            axs[0].imshow(predictionmap, cmap=cmap, interpolation='none')
             axs[0].set_title('M1 Flood Probabilities', fontsize=font_size)
+            axs[0].axis('off')
 
             axs[1].imshow(labelmap, cmap=cmap, interpolation='none')
             axs[1].set_title(f'Label', fontsize=font_size)
+            axs[1].axis('off')
 
             # Increase label size for axis ticks
             for ax in axs:
                 ax.tick_params(axis='both', which='major', labelsize=font_size)
 
             plt.tight_layout()
-
+            
             isExist = os.path.exists(save_path)
             if not isExist:
                 os.makedirs(save_path)
-            plt.savefig(f"{save_path}{band_index}.png")
+            plt.savefig(f"{save_path}{utils.split_time_index(band_index)}.png")
             plt.close(fig)
 
 
@@ -734,21 +839,32 @@ class BaseLineModel:
         Args:
             save_path (str, optional): Saving path. Defaults to "graph/model1_AP/predictions/".
         """
+        font_size = 12
+
         if self.full_grid_all is None:
             self.compute_full_grid()
-        for specific_time_slice in range(self.full_grid_all.shape[0]):
-            grid_2d = self.full_grid_all[specific_time_slice, :, :]
-            plt.figure(figsize=(20, 8))
-            plt.imshow(grid_2d, cmap='viridis', interpolation='none')
+        cmap = plt.cm.viridis_r
+        cmap.set_bad('#A5E0E4', 1.)
+#       for specific_time_slice in range(self.full_grid_all.shape[0]):
+        for k, band_index in enumerate(self.labels.sel(time=slice(
+                            self.dataset_limits["train"]["start"],
+                            self.dataset_limits["train"]["end"],
+                            )).time.values):
+            labelmap = self.labels['__xarray_dataarray_variable__'][k].values
+
+            predictionmap = self.full_grid_all[k, :, :]
+            predictionmap[labelmap == -1] = np.nan
+
+            plt.figure(figsize=(15, 10))
+            plt.imshow(predictionmap, cmap=cmap, interpolation='none')
             plt.colorbar(label='M1 Flood Probability')
-            plt.title(f'Flood Probabilities - Time Slice {specific_time_slice}')
-            plt.xlabel('X Coordinate')
-            plt.ylabel('Y Coordinate')
+            plt.title(f'Flood Probabilities - Time Slice {band_index}',fontsize=font_size)
+            plt.axis("off")
 
             isExist = os.path.exists(save_path)
             if not isExist:
                 os.makedirs(save_path)
-            plt.savefig(f"{save_path}{specific_time_slice}.png")
+            plt.savefig(f"{save_path}{utils.split_time_index(band_index)}.png")
             plt.close()
 
     def save_error_map(self, 
@@ -758,6 +874,8 @@ class BaseLineModel:
         Args:
             save_path (str, optional): Saving path. Defaults to "graph/model1_AP/label_and_pred/".
         """
+        font_size = 12
+
         if self.full_grid_all is None:
             self.compute_full_grid()
 
@@ -775,18 +893,20 @@ class BaseLineModel:
             cmap = plt.cm.seismic
             cmap.set_bad('#A5E0E4', 1.)
             errormap = predictionmap - labelmap
-            plt.figure(figsize=(20, 8))
+            plt.figure(figsize=(15, 10))
             plt.set_cmap(cmap)
             norm = colors.TwoSlopeNorm(vmin=-1, vcenter=0, vmax=1)
 
             plt.imshow(errormap, cmap=cmap, interpolation='none', norm=norm)
 
             plt.colorbar(label='M1 Flood Errors -1 : flood missed, 1 : false alarm')
+            plt.title(f'Flood Probabilities - Time Slice {band_index}',fontsize=font_size)
+            plt.axis("off")
 
             isExist = os.path.exists(save_path)
             if not isExist:
                 os.makedirs(save_path)
-            plt.savefig(f"{save_path}{band_index}.png")
+            plt.savefig(f"{save_path}{utils.split_time_index(band_index)}.png")
             plt.close()
 
 
@@ -862,14 +982,14 @@ class BaseLineModel:
                 raise ValueError("dataset must be either Val, Train or Test")
             y_pred_proba_val = utils.batch_predict(self.model,X, is_proba = True)
             y_pred_val = utils.batch_predict(self.model,X, is_proba = False)
-            for metric in ["roc", "AP", "BrierScore", "f1", "precision", "recall", "acc"]:
+            for metric in ["roc", "BrierScore", "f1", "precision", "recall", "acc"]:
                 score = self.compute_metric(y_pred_proba_val,
                                             y_pred_val,
                                             y, 
                                             mode=metric)
                 print(f"{metric} : {score}")
-
-            print(f"")
+            print(f"")    
+        print(f"f1, precision, recall and acc are computed at threshold 0.5")
 
 
     def compute_metric(self, 
