@@ -720,8 +720,8 @@ class BaseLineModel:
                             self.dataset_limits["train"]["end"],
                             )).time.values):
             fig, axs = plt.subplots(n_rows, n_cols, figsize=(20, 25))
-            label_map = self.labels['__xarray_dataarray_variable__'][k].values
-            pred_map = self.full_grid_all[k, :, :]
+            label_map = self.labels['__xarray_dataarray_variable__'][k].values.copy()
+            pred_map = self.full_grid_all[k, :, :].copy()
             
             water_mask = label_map == -1
             pred_map[water_mask] = np.nan
@@ -799,9 +799,9 @@ class BaseLineModel:
                             self.dataset_limits["train"]["start"],
                             self.dataset_limits["train"]["end"],
                             )).time.values):
-            labelmap = self.labels['__xarray_dataarray_variable__'][k].values
+            labelmap = self.labels['__xarray_dataarray_variable__'][k].values.copy()
 
-            predictionmap = self.full_grid_all[k, :, :]
+            predictionmap = self.full_grid_all[k, :, :].copy()
             predictionmap[labelmap == -1] = np.nan
 
             labelmap[labelmap == -1] = np.nan
@@ -852,7 +852,7 @@ class BaseLineModel:
                             )).time.values):
             labelmap = self.labels['__xarray_dataarray_variable__'][k].values
 
-            predictionmap = self.full_grid_all[k, :, :]
+            predictionmap = self.full_grid_all[k, :, :].copy()
             predictionmap[labelmap == -1] = np.nan
 
             plt.figure(figsize=(15, 10))
@@ -883,21 +883,20 @@ class BaseLineModel:
                             self.dataset_limits["train"]["start"],
                             self.dataset_limits["train"]["end"],
                             )).time.values):
-            labelmap = self.labels['__xarray_dataarray_variable__'][k].values
+            labelmap = self.labels['__xarray_dataarray_variable__'][k].values.copy()
 
-            predictionmap = self.full_grid_all[k, :, :]
+            predictionmap = self.full_grid_all[k, :, :].copy()
             predictionmap[labelmap == -1] = np.nan
 
             labelmap[labelmap == -1] = np.nan
 
-            cmap = plt.cm.seismic
-            cmap.set_bad('#A5E0E4', 1.)
+            cmap_em = plt.cm.seismic
+            cmap_em.set_bad('#A5E0E4', 1.)
             errormap = predictionmap - labelmap
             plt.figure(figsize=(15, 10))
-            plt.set_cmap(cmap)
             norm = colors.TwoSlopeNorm(vmin=-1, vcenter=0, vmax=1)
 
-            plt.imshow(errormap, cmap=cmap, interpolation='none', norm=norm)
+            plt.imshow(errormap, cmap=cmap_em, interpolation='none', norm=norm)
 
             plt.colorbar(label='M1 Flood Errors -1 : flood missed, 1 : false alarm')
             plt.title(f'Flood Probabilities - Time Slice {band_index}',fontsize=font_size)

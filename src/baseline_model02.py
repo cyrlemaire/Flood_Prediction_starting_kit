@@ -1574,7 +1574,7 @@ class BaseLineModel:
 
             grid = score_2d[0, :, :]
 
-            plt.figure(figsize=(20, 8))
+            plt.figure(figsize=(15, 10))
             cmap = plt.cm.gray_r
             cmap.set_bad('#A5E0E4', 1.)
 
@@ -1612,7 +1612,7 @@ class BaseLineModel:
                 plt.scatter(x_TP, y_TP, color='green', label='True Positive', marker='s', s=1)
 
             plt.colorbar(im, label='Predicted Flood Probability')
-            plt.title(f'2D Map of Predicted Flood Probabilities - Time Slice {band}')
+            plt.title(f'Predicted Flood Probabilities - Week {band}')
             plt.legend(fontsize=font_size)
 
             # Adjusting tick label font size
@@ -1635,7 +1635,12 @@ class BaseLineModel:
                      isTN2:bool = False, 
                      thresholdM1:float = -1,
                      thresholdM2:float = 0.5,
-                     save_path = "predictions_TPFN_full_test/"):
+                     save_path = "predictions_TPFN_full_test/",
+                     min_x:Any=False,
+                     max_x:Any=False,
+                     min_y:Any=False,
+                     max_y:Any=False,
+                     ):
         """Prints prediction map with 
         True Positives, False Positives, False Negatives, and True Negatives (for both models).
 
@@ -1652,6 +1657,14 @@ class BaseLineModel:
         TN2 : bool, optional
             Whether to print the number of True Negatives for Model 2.
         """
+        if min_x == False:
+            min_x = 0
+        if max_x == False:
+            max_x = self.x_dim_FR
+        if min_y == False:
+            min_y = 0
+        if max_y == False:
+            max_y = self.y_dim_FR
         font_size = 16
         if thresholdM1 == -1:
             thresholdM1 = self.min_score_model1
@@ -1659,9 +1672,9 @@ class BaseLineModel:
         for band in self.labels_FR.time.values:
             print(band)
 
-            self.prepare_data_one_band()
+            self.prepare_data_one_band(band)
             score_2d, labels_2d, scoreM1_2d = self.compute_full_grid_with_labels()
-
+            print("score_2d.shape : ",score_2d.shape)
             # Create masks for each labels 
             mask_positive = labels_2d == 1
             mask_negative = labels_2d == 0
@@ -1672,13 +1685,13 @@ class BaseLineModel:
 
             score_2d[score_2d == -1] = np.nan  # remove non-france data
 
-            grid = score_2d[0, 2500:, 3500:]
+            grid = score_2d[0, min_y:max_y, min_x:max_x]
 
-            fig, axs = plt.subplots(2, 1, figsize=(32, 16))
+            fig, axs = plt.subplots(2, 1, figsize=(16, 16))
             cmap = plt.cm.gray_r
             cmap.set_bad('#A5E0E4', 1.)
 
-            axs[0].imshow(labels_2d[0, 2500:, 3500:], cmap=cmap, interpolation='none')
+            axs[0].imshow(labels_2d[0, min_y:max_y, min_x:max_x], cmap=cmap, interpolation='none')
 
             axs[0].set_title(f'Label', fontsize=font_size)
 
@@ -1716,16 +1729,6 @@ class BaseLineModel:
                 TP = (mask_detected_M2 & mask_positive) & (mask_detected_M1)
                 _, y_TP, x_TP = np.where(TP)
                 plt.scatter(x_TP, y_TP, color='green', label='True Positive', marker='s', s=1)
-
-            #plt.colorbar(im, label='Predicted Flood Probability', fontsize=font_size)
-            plt.title(f'2D Map of Predicted Flood Probabilities - Time Slice {band}', fontsize=font_size)
-            plt.xlabel('X Coordinate', fontsize=font_size)
-            plt.ylabel('Y Coordinate', fontsize=font_size)
-            plt.legend(fontsize=font_size)
-
-            # Adjusting tick label font size
-            plt.xticks(fontsize=font_size)
-            plt.yticks(fontsize=font_size)
 
             isExist = os.path.exists(save_path)
             if not isExist:
@@ -1769,14 +1772,13 @@ class BaseLineModel:
             cmap = plt.cm.gray_r
             cmap.set_bad('#A5E0E4', 1.)
 
-            plt.figure(figsize=(32, 16))
+            plt.figure(figsize=(16, 16))
 
             plt.imshow(grid, cmap=cmap, interpolation='none')
             
             #plt.colorbar(im, label='Predicted Flood Probability', fontsize=font_size)
-            plt.title(f'Flood Score - Time Slice {band}', fontsize=font_size)
-            plt.xlabel('X Coordinate', fontsize=font_size)
-            plt.ylabel('Y Coordinate', fontsize=font_size)
+            plt.title(f'Flood Score - {band}', fontsize=font_size)
+            
             plt.legend(fontsize=font_size)
 
             # Adjusting tick label font size
