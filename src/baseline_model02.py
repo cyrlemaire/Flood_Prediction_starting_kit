@@ -12,6 +12,7 @@ from sklearn.model_selection import cross_val_score
 import os
 import json
 import src.Utils as utils
+import math
 class BaseLineModel:
     """
     BaseLineModel is designed to serve as a foundational framework for flood prediction
@@ -481,13 +482,43 @@ class BaseLineModel:
         -----
         - Assumes dynamic and static features have already been loaded with 'load_FullRez' method.
         """                    
+        y_min = 0
+        y_max = self.y_dim_FR
+        self.prepare_data_one_band_low_ram(
+            band,
+            y_min,
+            y_max,
+            compute_labels=compute_labels
+        )
+
+    def prepare_data_one_band_low_ram(
+        self, 
+        band: str,
+        y_min: int,
+        y_max: int,
+        compute_labels: bool = True,
+    ):                     
+        """Prepares data for a single time point week by combining static and dynamic features.
         
+        Parameters
+        ----------
+        band : str
+            The week for which the predictions are being prepared.
+
+        Notes
+        -----
+        - Assumes dynamic and static features have already been loaded with 'load_FullRez' method.
+        """                    
+        
+        y_diff = y_max - y_min 
+
         static_indices = list(range(self.nb_feature_static))
         dynamic_indices = list(range(self.nb_feature_dynamic))
         num_statics = len(static_indices)
 
         start_date = pd.to_datetime(band)
-        filtered_dynamic_features = self.dynamic_features_FR.sel(time=start_date)
+        filtered_dynamic_features = self.dynamic_features_FR.sel(time=start_date).isel(y=slice(y_min,y_max))
+        filtered_static_features = self.static_features_FR.isel(y=slice(y_min,y_max))
         # compute the total number of features
         total_features = num_statics
         if len(dynamic_indices) > 0:
@@ -495,12 +526,12 @@ class BaseLineModel:
                 total_features += 1
 
         # create an empty array for features
-        feature_array = np.empty((self.x_dim_FR * self.y_dim_FR, total_features))
+        feature_array = np.empty((self.x_dim_FR * y_diff, total_features))
         feature_index = 0
 
         # add static features if any
         for static_index in static_indices:
-            feature_array[:, feature_index] = self.static_features_FR['__xarray_dataarray_variable__'][static_index].data.reshape(self.x_dim_FR * self.y_dim_FR)
+            feature_array[:, feature_index] = filtered_static_features['__xarray_dataarray_variable__'][static_index].data.reshape(self.x_dim_FR * y_diff)
             feature_index += 1
 
 
@@ -511,7 +542,7 @@ class BaseLineModel:
         if compute_labels:
             target = self.labels_FR['__xarray_dataarray_variable__'].sel(time=band).data.reshape(-1)
         else:
-            target = np.zeros((self.x_dim_FR * self.y_dim_FR))
+            target = np.zeros((self.x_dim_FR * y_diff))
 
         self.X_band = feature_array
         self.y_band = target
@@ -540,8 +571,10 @@ class BaseLineModel:
         Tuple[int, np.ndarray]
             The updated feature index and the feature array.
         """
-
-        feature_array[:, feature_index] = feature.reshape(self.x_dim_FR * self.y_dim_FR)
+#        print(feature.shape)
+#        print(self.x_dim_FR)
+#        print(self.y_dim_FR)
+        feature_array[:, feature_index] = feature.reshape(self.x_dim_FR *feature.shape[0])
         feature_index += 1
 
         return feature_index, feature_array
@@ -843,6 +876,37 @@ class BaseLineModel:
                                   max_depth = individual[self.nb_feature+1], 
                                   is_GA = is_GA) 
 
+    def train_model(self, 
+                   individual: list,
+                   compute_xval = False) -> Any:
+        """Transforms a genetic algorithm individual into model parameters and checks/loads the model.
+        This method is typically used within a genetic algorithm loop to transform an individual's representation
+        into model parameters and then load or check the model accordingly.
+
+        Parameters
+        ----------
+        individual : list
+            The list representation of an individual from a genetic algorithm, including feature selection and model parameters.
+        save_model : bool, optional
+        """
+        if compute_xval:
+            # We force the Cross_Val computation
+            oldXVal = self.Cross_Val 
+            self.Cross_Val = True
+            xVal = self.check_load(indices = [i for i, use in enumerate(individual[:self.nb_feature]) if use], 
+                                    n_estimators = individual[self.nb_feature], 
+                                    max_depth = individual[self.nb_feature+1], 
+                                    is_GA = True) 
+            print("X-Val Score : ",xVal)
+            # We go back to the previous mode
+            self.Cross_Val = oldXVal
+
+        return self.check_load(indices = [i for i, use in enumerate(individual[:self.nb_feature]) if use], 
+                                  n_estimators = individual[self.nb_feature], 
+                                  max_depth = individual[self.nb_feature+1], 
+                                  is_GA = False)
+
+
     def evalModel(self, 
                   individual: list, 
                   is_GA: bool = True) -> Tuple[float]:
@@ -927,7 +991,6 @@ class BaseLineModel:
         else:
             self.train_flood_prediction_model(n_estimators, max_depth)
             score = self.simple_val()
-        print("score",score)
         return score
     
     def cross_val(self,
@@ -978,7 +1041,6 @@ class BaseLineModel:
         if mode == "":
             mode = self.score_mode
 
-        print("i",dataset)
         if dataset == "Val":
             X = self.X_val[:,self.selected_features]
             y = self.y_val
@@ -1105,21 +1167,39 @@ class BaseLineModel:
         Tuple[np.ndarray, np.ndarray]
             The full grid of predicted probabilities and the corresponding labels reshaped to the original data's spatial dimensions.
         """
-        factor = self.y_dim_FR * self.x_dim_FR
+        y_min = 0
+        y_max = self.y_dim_FR
+        return self.compute_full_grid_with_labels_low_ram(y_min,y_max,compute_labels=compute_labels)
+
+
+    def compute_full_grid_with_labels_low_ram(
+        self,
+        y_min,
+        y_max,
+        compute_labels:bool=True,
+    ) -> Tuple[np.ndarray, np.ndarray]:
+        """Computes a grid of predicted probabilities alongside the corresponding labels on the full resolution dataset.
+
+        Returns
+        -------
+        Tuple[np.ndarray, np.ndarray]
+            The full grid of predicted probabilities and the corresponding labels reshaped to the original data's spatial dimensions.
+        """
+        y_diff = y_max - y_min
+        factor = y_diff * self.x_dim_FR
         size = int(self.X_band.shape[0]/factor)
-        full_grid = np.full((size, self.y_dim_FR, self.x_dim_FR), np.nan)
+        full_grid = np.full((size, y_diff, self.x_dim_FR), np.nan)
         full_grid_flat = full_grid.reshape(-1)  
         full_grid_flat = self.predict_prob("Band")
         if compute_labels:
             mask = self.y_band == -1
             full_grid_flat[mask] = -1
-            full_labels = self.y_band.reshape(size, self.y_dim_FR, self.x_dim_FR)
+            full_labels = self.y_band.reshape(size, y_diff, self.x_dim_FR)
         else:
-            full_labels = np.full((size, self.y_dim_FR, self.x_dim_FR), -1)
-        full_grid = full_grid_flat.reshape(size, self.y_dim_FR, self.x_dim_FR)
-        full_scores = self.X_band[:,-1].reshape(size, self.y_dim_FR, self.x_dim_FR)
+            full_labels = np.full((size, y_diff, self.x_dim_FR), -1)
+        full_grid = full_grid_flat.reshape(size, y_diff, self.x_dim_FR)
+        full_scores = self.X_band[:,-1].reshape(size, y_diff, self.x_dim_FR)
         return full_grid, full_labels, full_scores
-
 
     def print_feature_importance(self):
         """Prints the importance of each selected feature in the model.
@@ -1674,7 +1754,6 @@ class BaseLineModel:
 
             self.prepare_data_one_band(band)
             score_2d, labels_2d, scoreM1_2d = self.compute_full_grid_with_labels()
-            print("score_2d.shape : ",score_2d.shape)
             # Create masks for each labels 
             mask_positive = labels_2d == 1
             mask_negative = labels_2d == 0
@@ -1685,18 +1764,16 @@ class BaseLineModel:
 
             score_2d[score_2d == -1] = np.nan  # remove non-france data
 
-            grid = score_2d[0, min_y:max_y, min_x:max_x]
 
             fig, axs = plt.subplots(2, 1, figsize=(16, 16))
             cmap = plt.cm.gray_r
             cmap.set_bad('#A5E0E4', 1.)
 
             axs[0].imshow(labels_2d[0, min_y:max_y, min_x:max_x], cmap=cmap, interpolation='none')
-
             axs[0].set_title(f'Label', fontsize=font_size)
 
 
-            axs[1].imshow(grid, cmap=cmap, interpolation='none')
+            axs[1].imshow(score_2d[0, min_y:max_y, min_x:max_x], cmap=cmap, interpolation='none')
             axs[1].set_title('M2 Flood Probabilities', fontsize=font_size)
 
             # Overlay
@@ -1771,7 +1848,6 @@ class BaseLineModel:
             
             cmap = plt.cm.gray_r
             cmap.set_bad('#A5E0E4', 1.)
-
             plt.figure(figsize=(16, 16))
 
             plt.imshow(grid, cmap=cmap, interpolation='none')
@@ -1791,9 +1867,11 @@ class BaseLineModel:
             plt.savefig(f"{save_path}{utils.split_time_index(band)}.png")
             plt.close()
 
-
-    def save_full_pred(self, 
-                     save_path = "predictions_TPFN_full_test/"):
+    def save_full_pred(
+            self, 
+            save_path = "localdata/",
+            reduction_factor = 10
+        ):
         """Prints prediction map with 
         True Positives, False Positives, False Negatives, and True Negatives (for both models).
 
@@ -1811,24 +1889,25 @@ class BaseLineModel:
             Whether to print the number of True Negatives for Model 2.
         """
 
-        full_cube = np.full((self.dynamic_features_FR.time.shape[0], self.y_dim_FR, self.x_dim_FR), np.nan)
-        iter = 0
-        for band in self.dynamic_features_FR.time.values:
-            print(band)
+        reduced_y_dim_FR = math.ceil(self.y_dim_FR / reduction_factor)
+        full_cube = np.full((self.dynamic_features_FR.time.shape[0],
+                            self.y_dim_FR,
+                            self.x_dim_FR), np.nan, dtype='float32')
 
-            self.prepare_data_one_band(band,compute_labels=False)
-            score_2d, _, _ = self.compute_full_grid_with_labels(compute_labels=False)
+        for iter, band in enumerate(self.dynamic_features_FR.time.values):
+            for y_reduced in range(0,reduced_y_dim_FR):
+                y_min = y_reduced*10
+                y_max = (y_reduced+1)*10
+                if y_max > self.y_dim_FR:
+                    y_max = self.y_dim_FR
+                #print(f"{y_reduced} - {y_min} - {y_max}")
+                self.prepare_data_one_band_low_ram(band, y_min, y_max, compute_labels=False)
+                score_2d, _, _ = self.compute_full_grid_with_labels_low_ram(y_min, y_max,compute_labels=False)
+                score_2d = score_2d.astype('float32')
+                grid = score_2d[0, :, :]
+                full_cube[iter, y_min:y_max, :] = grid
 
-            # Create masks for each labels 
-
-            score_2d[score_2d == -1] = np.nan  # remove non-france data
-
-            grid = score_2d[0, :, :]
-            full_cube[iter, :, :] = grid
-            iter += 1
-        
         print(full_cube.shape)
-
 
         xr_array_score = xr.DataArray(full_cube, 
                                     dims=["time", "y", "x"],
@@ -1837,13 +1916,13 @@ class BaseLineModel:
                                             "y": self.dynamic_features_FR.y},
                                     name="M2_score")
 
-        xr_array_score = xr_array_score.astype('float32')
+        xr_array_score.to_netcdf(f'{save_path}/Model2_Score_Full_Rez_inf.nc', 
+                                 engine='h5netcdf')
 
-        xr_array_score.to_netcdf('localdata/Model2_Score_Full_Rez_inf.nc', engine='h5netcdf')
-
-
-    def save_prediction_map_and_labels(self, 
-                            save_path = "graph/model1_AP/label_and_pred/"):
+    def save_prediction_map_and_labels(
+        self, 
+        save_path = "graph/model1_AP/label_and_pred/"
+    ):
         font_size = 32
         for k, band_index in enumerate(self.labels.band.values):
             labelmap = self.labels['__xarray_dataarray_variable__'][k].values
